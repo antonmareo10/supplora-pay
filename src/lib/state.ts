@@ -60,6 +60,10 @@ async function load(): Promise<AppState> {
     const raw = await fs.readFile(STATE_FILE, "utf8");
     const parsed = JSON.parse(raw) as AppState;
     if (parsed.version !== 1) throw new Error("Unsupported state version");
+    // A review cannot survive a server restart: release documents stuck in "reviewing".
+    for (const d of parsed.documents) {
+      if (d.reviewStatus === "reviewing") d.reviewStatus = d.review ? "reviewed" : "pending";
+    }
     store.state = parsed;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") console.error("[state] could not read state, starting fresh:", err);

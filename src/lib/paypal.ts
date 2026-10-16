@@ -329,11 +329,12 @@ export async function createOrder(input: {
   });
 }
 
-export async function confirmWithCardOnFile(orderId: string, vaultId: string, ref: AuditEntry["ref"]): Promise<OrderResponse> {
+/** `attempt` makes each owner approval a new idempotent request (a retry after a decline must not replay it). */
+export async function confirmWithCardOnFile(orderId: string, vaultId: string, ref: AuditEntry["ref"], attempt: string): Promise<OrderResponse> {
   return request<OrderResponse>({
     method: "POST",
     path: `/v2/checkout/orders/${encodeURIComponent(orderId)}/confirm-payment-source`,
-    requestId: `confirm-${orderId}`,
+    requestId: `confirm-${orderId}-${attempt}`,
     label: "Order approved with the card on file (vault token)",
     ref,
     resourceId: (j) => `${j.id} · ${j.status}`,
@@ -341,11 +342,11 @@ export async function confirmWithCardOnFile(orderId: string, vaultId: string, re
   });
 }
 
-export async function captureOrder(orderId: string, ref: AuditEntry["ref"], amountCents?: number): Promise<OrderResponse> {
+export async function captureOrder(orderId: string, ref: AuditEntry["ref"], attempt: string, amountCents?: number): Promise<OrderResponse> {
   return request<OrderResponse>({
     method: "POST",
     path: `/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`,
-    requestId: `capture-${orderId}`,
+    requestId: `capture-${orderId}-${attempt}`,
     label: "Order captured",
     ref,
     amountCents,

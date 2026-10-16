@@ -293,9 +293,12 @@ async function saveProposal(id: string, orders: StoreOrder[], limitCents: number
 /** Approve and pay an order with the card on file: confirm-payment-source, then capture. */
 async function payOrder(order: StoreOrder, ref: { proposalId?: string; orderId: string }): Promise<StoreOrder> {
   const card = await ensureCardOnFile();
+  // One idempotency suffix per approval attempt: double clicks are blocked by the
+  // proposal lock, and PayPal itself refuses to capture an order twice.
+  const attempt = crypto.randomUUID().slice(0, 8);
   try {
-    const confirmed = await confirmWithCardOnFile(order.id, card.vaultId, ref);
-    const captured = confirmed.status === "COMPLETED" ? confirmed : await captureOrder(order.id, ref, order.totalCents);
+    const confirmed = await confirmWithCardOnFile(order.id, card.vaultId, ref, attempt);
+    const captured = confirmed.status === "COMPLETED" ? confirmed : await captureOrder(order.id, ref, attempt, order.totalCents);
     const cap = firstCapture(captured);
     return { ...order, status: captured.status, captureId: cap?.id, captureStatus: cap?.status, cardLabel: card.label, error: undefined };
   } catch (err) {
