@@ -1,0 +1,220 @@
+@import "tailwindcss";
+
+/* Supplora Pay: a ledger on warm paper. Shares Tastecraft's paper/ink/olive/terracotta
+   family; its own accent is "ledger blue" (actions) and the stamp (statuses). */
+:root {
+  color-scheme: light;
+  --paper: #f4efe4;
+  --paper-2: #ebe3d2;
+  --paper-3: #e2d8c3;
+  --card: #fffcf6;
+  --ink: #1b1914;
+  --ink-2: #4a4437;
+  --muted: #7d7463;
+  --line: #ddd2bd;
+  --line-2: #cbbd9f;
+  --olive: #2f4a35;
+  --olive-2: #46684d;
+  --olive-soft: #e4ebdc;
+  --terracotta: #b0452a;
+  --terracotta-soft: #f6e1d7;
+  --saffron: #b97a12;
+  --saffron-soft: #f7ebcf;
+  --ledger: #1e3a5c;
+  --ledger-2: #2c5282;
+  --ledger-soft: #e3e9f1;
+  --paypal: #003087;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-paper-3: var(--paper-3);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-olive: var(--olive);
+  --color-olive-2: var(--olive-2);
+  --color-olive-soft: var(--olive-soft);
+  --color-terracotta: var(--terracotta);
+  --color-terracotta-soft: var(--terracotta-soft);
+  --color-saffron: var(--saffron);
+  --color-saffron-soft: var(--saffron-soft);
+  --color-ledger: var(--ledger);
+  --color-ledger-2: var(--ledger-2);
+  --color-ledger-soft: var(--ledger-soft);
+  --color-paypal: var(--paypal);
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-instrument);
+  --font-mono: var(--font-jetbrains);
+}
+
+html,
+body {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "cv11", "ss01";
+}
+
+::selection {
+  background: color-mix(in srgb, var(--saffron) 30%, transparent);
+}
+
+.font-display {
+  font-family: var(--font-instrument), ui-serif, Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Ruled ledger paper behind tables and the hero. */
+.ruled {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 31px,
+    color-mix(in srgb, var(--ledger) 7%, transparent) 31px,
+    color-mix(in srgb, var(--ledger) 7%, transparent) 32px
+  );
+}
+
+.grain {
+  background-image: radial-gradient(color-mix(in srgb, var(--ink) 5%, transparent) 0.6px, transparent 0.6px);
+  background-size: 6px 6px;
+}
+
+/* Perforated top edge, like a cheque stub. */
+.perforated {
+  position: relative;
+}
+.perforated::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  top: -1px;
+  height: 2px;
+  background-image: radial-gradient(circle, var(--paper) 3px, transparent 3.5px);
+  background-size: 14px 2px;
+}
+
+/* Rubber-stamp status. */
+.stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 2px solid currentColor;
+  box-shadow: inset 0 0 0 1.5px var(--card), inset 0 0 0 2.5px currentColor;
+  border-radius: 6px;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.stamp-tilt {
+  transform: rotate(-2.5deg);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise {
+  animation: rise 0.4s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.pulse-dot {
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+.sweep::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ledger) 18%, transparent), transparent);
+  animation: sweep 1.6s ease-in-out infinite;
+}
+
+@keyframes stamp-in {
+  0% {
+    opacity: 0;
+    transform: scale(1.6) rotate(-8deg);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(0.96) rotate(-2.5deg);
+  }
+  100% {
+    transform: scale(1) rotate(-2.5deg);
+  }
+}
+.stamp-in {
+  animation: stamp-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .pulse-dot,
+  .stamp-in,
+  .sweep::after {
+    animation: none;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--ledger-2);
+  outline-offset: 2px;
+}
+
+/* Scrollable tables on small screens without breaking the page width. */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #fff;
+  }
+}
