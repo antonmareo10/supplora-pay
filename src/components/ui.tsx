@@ -38,7 +38,7 @@ export function buttonClass(variant: "primary" | "ink" | "ghost" | "danger" | "q
     quiet: "text-ink-2 hover:bg-paper-2 hover:text-ink",
   };
   return cx(
-    "inline-flex shrink-0 items-center justify-center rounded-full font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+    "inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-full font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
     sizes[size],
     variants[variant],
   );
@@ -52,7 +52,7 @@ export function PageHeader({ kicker, title, children, actions }: { kicker: strin
         <h1 className="font-display mt-1 text-4xl leading-[1.05] text-ink sm:text-5xl">{title}</h1>
         {children && <div className="mt-3 text-[15px] leading-relaxed text-ink-2">{children}</div>}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </header>
   );
 }

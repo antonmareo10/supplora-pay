@@ -13,6 +13,7 @@ import { readState } from "@/lib/state";
 export const metadata: Metadata = { title: "Ledger" };
 
 const PAY_TONE = { paid: "olive", unclaimed: "olive", processing: "ledger", scheduled: "ledger", failed: "terracotta", unpaid: "muted", returned: "terracotta" } as const;
+const PAY_LABEL = { paid: "paid", unclaimed: "sent · unclaimed", processing: "paying", scheduled: "paying", failed: "failed", unpaid: "open", returned: "returned" } as const;
 
 export default async function LedgerPage() {
   await connection();
@@ -111,7 +112,7 @@ export default async function LedgerPage() {
                       )}
                     </td>
                     <td className="py-2.5 pl-2 pr-5 text-right">
-                      <Pill tone={status === "held" ? "terracotta" : PAY_TONE[d.payment.status]}>{status}</Pill>
+                      <Pill tone={status === "held" ? "terracotta" : PAY_TONE[d.payment.status]}>{status === "held" ? "held" : PAY_LABEL[d.payment.status]}</Pill>
                     </td>
                   </tr>
                 );

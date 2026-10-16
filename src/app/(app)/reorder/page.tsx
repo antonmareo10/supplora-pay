@@ -42,7 +42,7 @@ export default async function ReorderPage() {
               const pct = Math.min(100, Math.round((i.onHand / i.par) * 100));
               const isLow = i.onHand < i.par;
               return (
-                <li key={i.key} className="grid grid-cols-[minmax(0,1fr)_88px_64px] items-center gap-3 text-sm">
+                <li key={i.key} className="grid grid-cols-[minmax(0,1fr)_72px_84px] items-center gap-3 text-sm">
                   <span className="min-w-0">
                     <span className={cx("block truncate", isLow ? "font-medium text-ink" : "text-ink-2")}>{i.name}</span>
                     <span className="block truncate text-xs text-muted">{supplierById(i.supplierId)?.name}</span>

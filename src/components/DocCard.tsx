@@ -73,7 +73,7 @@ export function DocCard({ doc, today }: { doc: DocumentRecord; today: string }) 
       <DocThumb doc={doc} className="h-[104px] w-full sm:h-[122px]" />
       <div className="flex min-w-0 flex-col">
         <div className="flex items-start justify-between gap-2">
-          <p className="truncate text-[15px] font-semibold text-ink group-hover:text-ledger">{supplier ?? doc.fileName}</p>
+          <p className="min-w-0 truncate text-[15px] font-semibold text-ink group-hover:text-ledger">{supplier ?? (doc.origin === "upload" ? "Uploaded document" : "New supplier document")}</p>
           <Stamp tone={status.tone} className={doc.reviewStatus === "reviewing" ? "pulse-dot" : undefined}>
             {status.icon}
             {status.label}
@@ -85,7 +85,8 @@ export function DocCard({ doc, today }: { doc: DocumentRecord; today: string }) 
           </p>
         ) : (
           <p className="mt-0.5 text-xs text-muted">
-            {doc.origin === "upload" ? "Uploaded" : "Forwarded by email"} · {doc.reviewStatus === "failed" ? doc.reviewError : "waiting for Claude"}
+            <span className="block truncate font-mono text-[11px]">{doc.fileName}</span>
+            {doc.origin === "upload" ? "Uploaded" : "Forwarded by email"} · {doc.reviewStatus === "failed" ? <span className="text-terracotta">{doc.reviewError}</span> : doc.reviewStatus === "reviewing" ? "Claude is reading it…" : "waiting for Claude"}
           </p>
         )}
         {r && e && (

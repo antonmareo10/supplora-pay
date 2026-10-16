@@ -19,11 +19,11 @@ export function ActorBadge({ actor }: { actor: AuditEntry["actor"] }) {
 export function ApiLine({ api }: { api: NonNullable<AuditEntry["api"]> }) {
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-muted">
-      <Mono className={cx("rounded px-1.5 py-px", api.ok ? "bg-paper-2" : "bg-terracotta-soft text-terracotta")}>
+      <Mono className={cx("break-all rounded px-1.5 py-px", api.ok ? "bg-paper-2" : "bg-terracotta-soft text-terracotta")}>
         {api.method} {api.endpoint}
       </Mono>
       <span className={cx("num font-semibold", api.ok ? "text-olive" : "text-terracotta")}>{api.status || "ERR"}</span>
-      {api.resourceId && <Mono>{api.resourceId}</Mono>}
+      {api.resourceId && <Mono className="break-all">{api.resourceId}</Mono>}
       <span className="num">{api.durationMs} ms</span>
       {api.requestId && <span title="PayPal-Request-Id (idempotency key)">idem: <Mono>{api.requestId.length > 28 ? `${api.requestId.slice(0, 28)}…` : api.requestId}</Mono></span>}
       {api.debugId && <span title="PayPal debug id">debug: <Mono>{api.debugId}</Mono></span>}
@@ -40,14 +40,14 @@ export function ActivityList({ entries, compact }: { entries: AuditEntry[]; comp
         <li key={e.id} className={cx("flex gap-3", compact ? "py-2.5" : "py-3")}>
           <ActorBadge actor={e.actor} />
           <div className="min-w-0 flex-1">
-            <p className={cx("text-ink", compact ? "text-[13px] leading-snug" : "text-sm")}>{e.message}</p>
+            <p className={cx("break-words text-ink", compact ? "text-[13px] leading-snug" : "text-sm")}>{e.message}</p>
             {e.api && !compact && <ApiLine api={e.api} />}
           </div>
           <div className="hidden shrink-0 text-right sm:block">
             <time className="num block text-[11px] text-muted" dateTime={e.at}>
               {fmtDateTime(e.at)}
             </time>
-            {e.amountCents != null && !compact && <span className="num text-xs text-ink-2">{fmt(e.amountCents)}</span>}
+            {e.amountCents != null && e.amountCents > 0 && !compact && <span className="num text-xs text-ink-2">{fmt(e.amountCents)}</span>}
           </div>
         </li>
       ))}

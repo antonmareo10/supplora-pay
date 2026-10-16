@@ -67,7 +67,7 @@ Rules:
 - matched_item_key: for each line, the key from that supplier's product list when it is clearly the same product (wording or language may differ); otherwise null. Never map to another supplier's products.
 - payment_email: the PayPal or remittance email printed for payment, if any.
 - early_payment_discount: only when the document offers a discount for early payment (for example "2/10 net 30" means 2% if paid within 10 days).
-- observations: only things visible on the document that should change whether or how much the restaurant pays, for example: marked as a copy, reminder or duplicate; handwritten corrections; new or changed bank or payment details; a different customer; missing tax ID; unusual terms. Use severity "warning" for those and "info" for minor notes. Do not repeat arithmetic or price problems here. Return an empty list when nothing is unusual.
+- observations: only things visible on the document that should change whether or how much the restaurant pays, for example: marked as a copy, reminder or duplicate; handwritten corrections; new or changed bank or payment details; a different customer; missing tax ID; unusual terms. Use severity "warning" for those and "info" for minor notes. Do not repeat arithmetic or price problems, or whether the supplier is in the directory, here. Return an empty list when nothing is unusual.
 - legibility: how reliably you could read the numbers.`;
 
 function directoryText(): string {

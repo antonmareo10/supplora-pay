@@ -93,7 +93,7 @@ export default async function PaymentsPage() {
               <div>
                 <blockquote className="font-display text-[22px] leading-snug text-ink">“{shown.messageToOwner}”</blockquote>
                 <figcaption className="mt-1 text-xs text-muted">
-                  Payment agent (Claude) to {RESTAURANT.ownerFirstName} · {shown.summary !== shown.messageToOwner ? shown.summary : ""}
+                  Payment agent (Claude) to {RESTAURANT.ownerFirstName}
                 </figcaption>
               </div>
             </figure>

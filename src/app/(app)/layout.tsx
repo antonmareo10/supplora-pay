@@ -45,7 +45,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           <BrandMark />
           <span>
             <span className="font-display block text-[26px] leading-none text-ink">Supplora Pay</span>
-            <span className="block text-[11px] uppercase tracking-[0.16em] text-muted">Accounts-payable agent</span>
+            <span className="block whitespace-nowrap text-[10px] uppercase tracking-[0.12em] text-muted">Accounts-payable agent</span>
           </span>
         </Link>
 

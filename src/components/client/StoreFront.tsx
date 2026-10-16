@@ -64,7 +64,7 @@ export function StoreFront({
                   {p.name
                     .split(" ")
                     .slice(0, 2)
-                    .map((w) => w[0])
+                    .map((w) => w[0].toUpperCase())
                     .join("")}
                 </span>
               </div>

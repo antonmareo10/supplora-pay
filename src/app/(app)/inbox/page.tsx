@@ -39,7 +39,7 @@ export default async function InboxPage() {
         <UploadZone />
       </div>
 
-      <ul className="grid gap-3 md:grid-cols-2">
+      <ul className="grid gap-3 lg:grid-cols-2">
         {docs.map((doc) => (
           <li key={doc.id}>
             <DocCard doc={doc} today={today} />
