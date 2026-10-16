@@ -40,7 +40,8 @@ export function fmtDayLong(iso: string): string {
 
 export function fmtDateTime(isoTimestamp: string): string {
   const d = new Date(isoTimestamp);
-  return d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  // Fixed timezone (the restaurant's) so server and browser render the same text.
+  return d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Europe/Madrid" });
 }
 
 export function relativeDue(today: string, due: string | null | undefined): string {
