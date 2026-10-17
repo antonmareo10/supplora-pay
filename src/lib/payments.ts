@@ -237,6 +237,12 @@ function applyBatch(s: AppState, batchId: string, res: PayoutBatchResponse): Pay
       );
     }
   }
+  // Recompute the plan's status from its payments: a late failure (item FAILED during sync) must
+  // reopen the plan so the owner can retry that invoice, instead of leaving it stranded on a plan
+  // still marked "completed" (which approvePayments refuses).
+  if (plan) {
+    plan.status = plan.payments.some((p) => p.status === "proposed" || p.status === "failed") ? "partially_paid" : "completed";
+  }
   if (settledSomething) recheckAll(s);
   return batch;
 }

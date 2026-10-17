@@ -4,6 +4,18 @@ import type { AppState, DocumentRecord, FindingKind, PayAction } from "./types";
 
 export const OVERCHARGE_KINDS: FindingKind[] = ["price_increase", "quantity_mismatch", "not_delivered", "arithmetic", "totals_mismatch"];
 
+// Findings that mean "don't pay this at all" (hold). They never translate into a partial withholding,
+// so an invoice whose only findings are these cannot be paid partially — it is pay-in-full or hold.
+const HOLD_ONLY_KINDS: FindingKind[] = ["duplicate", "unknown_supplier", "payment_details_changed", "not_an_invoice", "currency"];
+
+/** What a partial payment would withhold (line-level overcharges only), capped at the invoice. 0 ⇒ partial makes no sense. */
+export function withholdableCents(doc: DocumentRecord): number {
+  const r = doc.review;
+  if (!r) return 0;
+  const lineWithheld = r.findings.filter((f) => !HOLD_ONLY_KINDS.includes(f.kind)).reduce((s, f) => s + f.withholdCents, 0);
+  return Math.min(r.invoiceCents, lineWithheld);
+}
+
 export const ACTION_LABEL: Record<PayAction, string> = {
   pay_full: "Pay in full",
   pay_partial: "Pay partial",
@@ -27,10 +39,7 @@ export function effective(doc: DocumentRecord): Effective | null {
   if (action === "hold") return { action, byOwner, invoiceCents: r.invoiceCents, withheldCents: r.invoiceCents, payableCents: 0 };
   if (action === "pay_full") return { action, byOwner, invoiceCents: r.invoiceCents, withheldCents: 0, payableCents: r.invoiceCents };
   // Partial: withhold what the checks flagged (lines), never the whole invoice.
-  const lineWithheld = r.findings
-    .filter((f) => !["duplicate", "unknown_supplier", "payment_details_changed", "not_an_invoice", "currency"].includes(f.kind))
-    .reduce((s, f) => s + f.withholdCents, 0);
-  const withheld = Math.min(r.invoiceCents, lineWithheld);
+  const withheld = withholdableCents(doc);
   return { action, byOwner, invoiceCents: r.invoiceCents, withheldCents: withheld, payableCents: r.invoiceCents - withheld };
 }
 

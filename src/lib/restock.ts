@@ -95,6 +95,18 @@ export async function runRestockAgent(emit: Emit, signal?: AbortSignal): Promise
     emit(e);
   };
   const spent = () => [...checkouts.values()].reduce((s, o) => s + o.totalCents, 0);
+  // create_checkout calls emitted in one assistant turn run concurrently (the tool runner awaits
+  // them with Promise.all). Serialize them so each sees the running total the previous committed;
+  // otherwise two carts can each read an empty total and both slip past the limit check.
+  let checkoutLock: Promise<unknown> = Promise.resolve();
+  const serialize = <T>(fn: () => Promise<T>): Promise<T> => {
+    const next = checkoutLock.then(fn, fn);
+    checkoutLock = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  };
 
   const wrap = <T extends z.ZodType>(def: {
     name: string;
@@ -169,7 +181,7 @@ export async function runRestockAgent(emit: Emit, signal?: AbortSignal): Promise
       items: z.array(z.object({ sku: z.string(), qty: z.number(), reason: z.string().describe("Why, e.g. on hand 1, par 4") })),
     }),
     label: ({ supplier_id, items }) => `Creating a checkout at ${supplierById(supplier_id)?.name ?? supplier_id} (${items.length} items)`,
-    run: async ({ supplier_id, items }) => {
+    run: ({ supplier_id, items }) => serialize(async () => {
       const lines = priceCart(supplier_id, items);
       const totals = cartTotals(lines);
       const others = spent() - (checkouts.get(supplier_id)?.totalCents ?? 0);
@@ -207,7 +219,7 @@ export async function runRestockAgent(emit: Emit, signal?: AbortSignal): Promise
           remaining_limit_eur: eur(limitCents - spent()),
         },
       };
-    },
+    }),
   });
 
   const submit = wrap({
@@ -320,6 +332,13 @@ export async function approveProposal(proposalId: string): Promise<void> {
     const p = s.proposals.find((x) => x.id === proposalId);
     if (!p) throw new CommerceError("Restock proposal not found.", 404);
     if (p.status !== "awaiting_approval" && p.status !== "failed") throw new CommerceError(`This proposal is ${p.status}.`, 409);
+    // Backstop: never capture more than the limit the owner set for this run, whatever the agent
+    // proposed. The spending limit is enforced here at approval time, not only in the agent's tools.
+    if (p.totalCents > p.limitCents)
+      throw new CommerceError(
+        `These orders total ${fmt(p.totalCents)}, over the ${fmt(p.limitCents)} spending limit. Decline and run the restock again.`,
+        409,
+      );
     p.status = "paying";
     s.audit.push(
       auditEntry({ actor: "owner", message: `${RESTAURANT.ownerFirstName} approved the restock orders (${fmt(p.totalCents)}).`, ref: { proposalId }, amountCents: p.totalCents }),
