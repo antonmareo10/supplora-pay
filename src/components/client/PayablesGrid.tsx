@@ -1,92 +1,48 @@
 "use client";
 
-// Payables dashboard built on AG Grid (Community). One row per reviewed invoice.
+// Payables dashboard: AG Charts + AG Grid (both Community), cross-filtered.
 //
-// Why a grid: /ledger is where the restaurant owner answers "what do I owe, what
-// did we hold, and why". A static table can't sort by due date, filter to the
-// held invoices, search a supplier or total the column that is currently in view.
-// This grid does all of that and keeps its running totals row in sync with the
-// filter, so the number at the bottom is always the money on screen.
+// Why a grid: /ledger is where the restaurant owner answers "what do I owe, what did we hold,
+// and why". A static table can't sort by due date, filter to the held invoices, search a
+// supplier or total the column that is currently in view.
 //
-// Licensing note: native row grouping + aggFunc are AG Grid *Enterprise* features.
-// Rather than ship an unlicensed Enterprise watermark, everything here is genuine
-// Community: external filter API (status chips), quick filter, per-column filters,
-// a live filter-aware pinned totals row, a group-by sort with a live subtotal strip,
-// and CSV export. All load-bearing, all free, no watermark.
+// What is custom here (all Community, no Enterprise modules, no watermark):
+//  - theme: Quartz re-skinned to the app's palette (ag-theme.ts), incl. change-flash colour;
+//  - layout: column groups (Invoice / Amounts / PayPal), supplier pinned left for narrow screens,
+//    a filter-aware pinned totals row, a live subtotal strip, chart above the grid;
+//  - widgets: status pills, severity dots, a findings tooltip with the evidence behind every
+//    flag, an in-cell "saved" bar, due dates with relative labels, PayPal id cells;
+//  - cross-filtering: status chips and a click on a supplier's bar in the chart are AG Grid
+//    external filters; the chart is recomputed from the rows that pass the grid's filters
+//    (quick search, column filters, chips), so chart, grid and totals always agree.
+// Native row grouping/aggregation and integrated charts are Enterprise features, so the
+// grouping strip and the chart are built on the Community APIs instead.
 
 import Link from "next/link";
+import { AgCharts } from "ag-charts-react";
+import { AllCommunityModule as ChartsCommunityModule, ModuleRegistry as ChartsModuleRegistry, type AgCartesianChartOptions } from "ag-charts-community";
 import {
-  AllCommunityModule,
-  ModuleRegistry,
-  themeQuartz,
   type CellClassRules,
   type ColDef,
+  type ColGroupDef,
   type GridApi,
   type GridReadyEvent,
   type ICellRendererParams,
   type IRowNode,
+  type ITooltipParams,
   type ValueFormatterParams,
   type ValueGetterParams,
 } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cx } from "@/components/ui";
 import { relativeDue } from "@/lib/dates";
 import { fmt } from "@/lib/money";
 import { STATUS_LABEL, STATUS_ORDER, type PayableStatus } from "@/lib/payables-status";
 import type { PayableRow } from "@/lib/payables-view";
+import { PALETTE, SEVERITY_DOT, STATUS_PILL, supploraTheme } from "./ag-theme";
 
-// Register the Community modules once (sorting, filtering, quick filter, CSV export,
-// pinned rows, value formatters, external filter — all live in AllCommunityModule).
-ModuleRegistry.registerModules([AllCommunityModule]);
-
-// Quartz, re-skinned to the Supplora Pay palette (mirrors the tokens in globals.css).
-// The app is light-only (`color-scheme: light`), so the theme is light to match.
-const supploraTheme = themeQuartz.withParams({
-  accentColor: "#1e3a5c", // --ledger
-  backgroundColor: "#fffcf6", // --card
-  foregroundColor: "#1b1914", // --ink
-  textColor: "#1b1914",
-  borderColor: "#ddd2bd", // --line
-  chromeBackgroundColor: "#f4efe4", // --paper (floating-filter / tool strip)
-  headerBackgroundColor: "#ebe3d2", // --paper-2
-  headerTextColor: "#4a4437", // --ink-2
-  headerFontWeight: 600,
-  oddRowBackgroundColor: "#fbf8f0",
-  rowHoverColor: "#f1ead9",
-  selectedRowBackgroundColor: "#e3e9f1", // --ledger-soft
-  rangeSelectionBorderColor: "#1e3a5c",
-  fontFamily: "var(--font-inter), ui-sans-serif, system-ui, sans-serif",
-  headerFontFamily: "var(--font-inter), ui-sans-serif, system-ui, sans-serif",
-  fontSize: 13,
-  headerHeight: 42,
-  rowHeight: 52,
-  borderRadius: 10,
-  wrapperBorderRadius: 14,
-  cellHorizontalPadding: 16,
-  columnBorder: false,
-  headerColumnBorder: false,
-  wrapperBorder: false,
-});
-
-// Status pill styling mirrors the app's <Pill> tones (see ui.tsx TONE_PILL).
-const STATUS_PILL: Record<PayableStatus, string> = {
-  paid: "border-olive/25 bg-olive-soft text-olive",
-  sent: "border-ink/70 bg-ink text-paper",
-  paying: "border-ledger/20 bg-ledger-soft text-ledger",
-  failed: "border-terracotta/25 bg-terracotta-soft text-terracotta",
-  held: "border-terracotta/25 bg-terracotta-soft text-terracotta",
-  disputed: "border-saffron/30 bg-saffron-soft text-[#8a5a0c]",
-  pending: "border-line bg-paper text-ink-2",
-};
-
-const SEVERITY_DOT: Record<string, string> = {
-  high: "bg-terracotta",
-  medium: "bg-saffron",
-  low: "bg-ledger",
-  opportunity: "bg-olive-2",
-  info: "bg-muted",
-};
+ChartsModuleRegistry.registerModules([ChartsCommunityModule]);
 
 type GroupKey = "none" | "status" | "supplier";
 
@@ -110,22 +66,35 @@ interface GroupSummary {
   cents: number;
 }
 
-// --- cell renderers --------------------------------------------------------
+/** One bar in the chart: where a supplier's invoiced euros stand. */
+interface SupplierMoney {
+  supplier: string;
+  paid: number;
+  toPay: number;
+  withheld: number;
+  held: number;
+}
+
+interface GridContext {
+  maxSaved: number;
+}
+
+// --- cell renderers & widgets ----------------------------------------------
 
 function SupplierCell(p: ICellRendererParams<PayableRow>) {
   if (p.node.rowPinned) {
     const t = p.data as unknown as TotalsRow;
     return (
       <span className="font-semibold text-ink">
-        Totals <span className="text-muted font-normal">· {t.count} invoice{t.count === 1 ? "" : "s"} in view</span>
+        Totals <span className="font-normal text-muted">· {t.count} in view</span>
       </span>
     );
   }
   const row = p.data;
   if (!row) return null;
   return (
-    <Link href={`/inbox/${row.id}`} className="group flex flex-col justify-center leading-tight">
-      <span className="font-medium text-ink group-hover:text-ledger">{row.supplier}</span>
+    <Link href={`/inbox/${row.id}`} className="group flex h-full flex-col justify-center leading-tight">
+      <span className="truncate font-medium text-ink group-hover:text-ledger">{row.supplier}</span>
       <span className="text-[11px] capitalize text-muted">{row.category}</span>
     </Link>
   );
@@ -143,17 +112,12 @@ function InvoiceCell(p: ICellRendererParams<PayableRow>) {
 function StatusCell(p: ICellRendererParams<PayableRow>) {
   if (p.node.rowPinned || !p.data) return null;
   const s = p.data.status;
-  return (
-    <span className={cx("inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium", STATUS_PILL[s])}>
-      {STATUS_LABEL[s]}
-    </span>
-  );
+  return <span className={cx("inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium", STATUS_PILL[s])}>{STATUS_LABEL[s]}</span>;
 }
 
 function RecommendationCell(p: ICellRendererParams<PayableRow>) {
   if (p.node.rowPinned || !p.data) return null;
-  const tone =
-    p.data.recommendation === "hold" ? "text-terracotta" : p.data.recommendation === "pay_partial" ? "text-[#8a5a0c]" : "text-olive";
+  const tone = p.data.recommendation === "hold" ? "text-terracotta" : p.data.recommendation === "pay_partial" ? "text-[#8a5a0c]" : "text-olive";
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={cx("text-sm font-medium", tone)}>{p.data.recommendationLabel}</span>
@@ -169,8 +133,38 @@ function FindingCell(p: ICellRendererParams<PayableRow>) {
     <span className="flex items-center gap-2 leading-tight">
       <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full", sev ? SEVERITY_DOT[sev] : "bg-line-2")} aria-hidden />
       <span className="truncate text-ink-2">{p.data.finding}</span>
-      {p.data.findingCount > 1 && <span className="shrink-0 text-[11px] text-muted">+{p.data.findingCount - 1}</span>}
+      {p.data.findingCount > 1 && <span className="shrink-0 rounded-full bg-paper-2 px-1.5 text-[11px] text-muted">+{p.data.findingCount - 1}</span>}
     </span>
+  );
+}
+
+/** Tooltip widget: every finding behind the recommendation, with its evidence and the money at stake. */
+function FindingsTooltip(p: ITooltipParams<PayableRow>) {
+  const row = p.data;
+  if (!row || p.node?.rowPinned) return null;
+  return (
+    <div className="max-w-[360px] rounded-xl border border-line bg-card p-3 text-[12.5px] leading-snug shadow-[0_12px_32px_-12px_rgba(40,30,10,0.35)]">
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+        {row.supplier} · {row.invoiceNumber}
+      </p>
+      {row.findings.length === 0 ? (
+        <p className="text-ink-2">No issues: matches the delivery note and price history.</p>
+      ) : (
+        <ul className="space-y-2">
+          {row.findings.map((f, i) => (
+            <li key={i} className="flex gap-2">
+              <span className={cx("mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full", SEVERITY_DOT[f.severity])} aria-hidden />
+              <span>
+                <span className="font-medium text-ink">{f.title}</span>
+                {f.withholdCents > 0 && <span className="num ml-1.5 text-terracotta">withhold {fmt(f.withholdCents)}</span>}
+                {f.withholdCents === 0 && f.impactCents > 0 && <span className="num ml-1.5 text-olive">{fmt(f.impactCents)}</span>}
+                <span className="block text-ink-2">{f.detail}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -180,29 +174,90 @@ function makeDueCell(today: string) {
     const due = p.data.dueDate;
     if (!due) return <span className="text-muted">—</span>;
     const rel = relativeDue(today, due);
+    const settled = p.data.status === "paid" || p.data.status === "sent";
     const overdue = rel.includes("overdue");
     const soon = rel === "due today" || rel === "due tomorrow";
     return (
-      <span className="flex flex-col justify-center leading-tight">
-        <span className="num text-ink-2">{p.value}</span>
-        <span className={cx("text-[11px]", overdue ? "text-terracotta" : soon ? "text-saffron" : "text-muted")}>{rel}</span>
+      <span className="flex h-full flex-col justify-center leading-tight">
+        <span className="num text-ink-2">{p.valueFormatted}</span>
+        <span className={cx("text-[11px]", settled ? "text-muted" : overdue ? "text-terracotta" : soon ? "text-saffron" : "text-muted")}>{settled ? "settled" : rel}</span>
       </span>
     );
   };
+}
+
+/** In-cell bar: how much this invoice saved, relative to the best one in the grid. */
+function SavedCell(p: ICellRendererParams<PayableRow, number, GridContext>) {
+  const v = p.value ?? 0;
+  if (p.node.rowPinned) return <span className="num font-semibold text-olive">{v ? fmt(v) : "—"}</span>;
+  if (!v) return <span className="text-muted">—</span>;
+  const pct = Math.max(6, Math.round((v / Math.max(1, p.context?.maxSaved ?? v)) * 100));
+  return (
+    <span className="flex h-full flex-col items-end justify-center gap-1">
+      <span className="num font-medium text-olive">{fmt(v)}</span>
+      <span className="h-1 w-16 overflow-hidden rounded-full bg-olive-soft" aria-hidden>
+        <span className="block h-full rounded-full bg-olive-2" style={{ width: `${pct}%` }} />
+      </span>
+    </span>
+  );
 }
 
 function PaypalCell(p: ICellRendererParams<PayableRow>) {
   if (p.node.rowPinned || !p.data) return null;
   if (!p.data.paypalBatchId) return <span className="text-muted">—</span>;
   return (
-    <span className="flex flex-col justify-center leading-tight">
+    <span className="flex h-full flex-col justify-center leading-tight">
       <code className="font-mono text-[12px] tracking-tight text-ink-2">{p.data.paypalBatchId}</code>
       {p.data.paypalItemId && <code className="font-mono text-[11px] tracking-tight text-muted">{p.data.paypalItemId}</code>}
     </span>
   );
 }
 
-// --- grid ------------------------------------------------------------------
+// --- chart -------------------------------------------------------------------
+
+const eurAxis = (v: number) => (v >= 1000 ? `€${(v / 1000).toFixed(1)}k` : `€${Math.round(v)}`);
+const SERIES = [
+  ["paid", "Paid via PayPal", PALETTE.olive2],
+  ["toPay", "To pay / in flight", PALETTE.ledger2],
+  ["withheld", "Withheld (credit note asked)", PALETTE.saffron],
+  ["held", "Held (not paid)", PALETTE.terracotta],
+] as const;
+
+function moneyChartOptions(data: SupplierMoney[], selected: string | null, onPick: (supplier: string) => void): AgCartesianChartOptions {
+  return {
+    data,
+    series: SERIES.map(([yKey, yName, fill]) => ({
+      type: "bar",
+      direction: "horizontal",
+      xKey: "supplier",
+      yKey,
+      yName,
+      stacked: true,
+      fill,
+      strokeWidth: 0,
+      cornerRadius: 3,
+      itemStyler: ({ datum }: { datum: SupplierMoney }) => ({ fillOpacity: selected && datum.supplier !== selected ? 0.28 : 1 }),
+      tooltip: {
+        renderer: ({ datum }: { datum: SupplierMoney }) => ({
+          heading: datum.supplier,
+          title: yName,
+          data: [{ label: "Amount", value: fmt(Math.round((datum[yKey] as number) * 100)) }],
+        }),
+      },
+    })),
+    axes: {
+      x: { type: "category", position: "left", label: { fontSize: 12, color: PALETTE.ink2 } },
+      y: { type: "number", position: "bottom", label: { formatter: ({ value }: { value: number }) => eurAxis(value), color: PALETTE.muted, fontSize: 11 } },
+    },
+    legend: { position: "bottom", item: { label: { color: PALETTE.ink2, fontSize: 12 } } },
+    background: { fill: PALETTE.card },
+    padding: { top: 8, right: 16, bottom: 4, left: 4 },
+    theme: { params: { fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif", foregroundColor: PALETTE.ink, textColor: PALETTE.ink2 } },
+    listeners: { seriesNodeClick: (e: { datum: unknown }) => onPick((e.datum as SupplierMoney).supplier) },
+  } as unknown as AgCartesianChartOptions;
+}
+
+// --- dashboard ---------------------------------------------------------------
 
 export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; today: string }) {
   const apiRef = useRef<GridApi<PayableRow> | null>(null);
@@ -212,185 +267,186 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
   const groupRef = useRef<GroupKey>("status");
   const [active, setActive] = useState<Set<PayableStatus>>(new Set());
   const activeRef = useRef(active);
+  const [supplier, setSupplier] = useState<string | null>(null);
+  const supplierRef = useRef<string | null>(null);
   const [totals, setTotals] = useState<TotalsRow | null>(null);
   const [groups, setGroups] = useState<GroupSummary[]>([]);
+  const [chartData, setChartData] = useState<SupplierMoney[]>([]);
 
-  // Statuses actually present in the data, in logical order, for the chip row.
   const presentStatuses = useMemo(() => {
     const seen = new Set(rows.map((r) => r.status));
     return STATUS_ORDER.filter((s) => seen.has(s));
   }, [rows]);
 
-  const moneyFmt = useCallback((p: ValueFormatterParams<PayableRow, number>) => fmt(p.value ?? 0), []);
-  const moneyOrDash = useCallback((p: ValueFormatterParams<PayableRow, number>) => (p.value ? fmt(p.value) : "—"), []);
-  const dueFmt = useCallback((p: ValueFormatterParams<PayableRow, string>) => {
-    if (!p.value) return "—";
-    const d = new Date(`${p.value}T00:00:00Z`);
-    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
-  }, []);
+  const context = useMemo<GridContext>(() => ({ maxSaved: Math.max(0, ...rows.map((r) => r.savedCents)) }), [rows]);
 
-  const columnDefs = useMemo<ColDef<PayableRow>[]>(() => {
+  const columnDefs = useMemo<(ColDef<PayableRow> | ColGroupDef<PayableRow>)[]>(() => {
     const dueCell = makeDueCell(today);
+    const moneyFmt = (p: ValueFormatterParams<PayableRow, number>) => fmt(p.value ?? 0);
+    const moneyOrDash = (p: ValueFormatterParams<PayableRow, number>) => (p.value ? fmt(p.value) : "—");
+    const dueFmt = (p: ValueFormatterParams<PayableRow, string>) =>
+      p.value ? new Date(`${p.value}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }) : "—";
+    // Number filters work in euros, like the owner thinks, while the data stays in cents.
+    const euros = (key: "invoiceCents" | "withheldCents" | "paidCents") => (p: ValueGetterParams<PayableRow>) => (p.data?.[key] != null ? (p.data[key] as number) / 100 : null);
     return [
       {
         field: "supplier",
         headerName: "Supplier",
         cellRenderer: SupplierCell,
-        flex: 2,
-        minWidth: 190,
+        pinned: "left",
+        lockPinned: true,
+        width: 210,
         filter: "agTextColumnFilter",
       },
       {
-        field: "invoiceNumber",
         headerName: "Invoice",
-        cellRenderer: InvoiceCell,
-        width: 140,
-        filter: "agTextColumnFilter",
-      },
-      {
-        field: "status",
-        headerName: "Status",
-        cellRenderer: StatusCell,
-        width: 150,
-        comparator: (a: PayableStatus, b: PayableStatus) => STATUS_ORDER.indexOf(a) - STATUS_ORDER.indexOf(b),
-        filterValueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? STATUS_LABEL[p.data.status] : ""),
-        filter: "agTextColumnFilter",
-      },
-      {
-        field: "recommendationLabel",
-        headerName: "Recommendation",
-        cellRenderer: RecommendationCell,
-        width: 165,
-        filter: "agTextColumnFilter",
-      },
-      {
-        field: "finding",
-        headerName: "Top finding",
-        cellRenderer: FindingCell,
-        flex: 2,
-        minWidth: 190,
-        filter: "agTextColumnFilter",
-      },
-      {
-        field: "dueDate",
-        headerName: "Due",
-        cellRenderer: dueCell,
-        valueFormatter: dueFmt,
-        width: 130,
-        filter: "agDateColumnFilter",
-        filterParams: {
-          comparator: (filterDate: Date, cellValue: string | null) => {
-            if (!cellValue) return -1;
-            const cell = new Date(`${cellValue}T00:00:00Z`);
-            const f = Date.UTC(filterDate.getFullYear(), filterDate.getMonth(), filterDate.getDate());
-            const c = Date.UTC(cell.getUTCFullYear(), cell.getUTCMonth(), cell.getUTCDate());
-            return c < f ? -1 : c > f ? 1 : 0;
+        marryChildren: true,
+        children: [
+          { field: "invoiceNumber", headerName: "Number", cellRenderer: InvoiceCell, width: 140, filter: "agTextColumnFilter" },
+          {
+            field: "status",
+            headerName: "Status",
+            cellRenderer: StatusCell,
+            width: 150,
+            enableCellChangeFlash: true,
+            comparator: (a: PayableStatus, b: PayableStatus) => STATUS_ORDER.indexOf(a) - STATUS_ORDER.indexOf(b),
+            filterValueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? STATUS_LABEL[p.data.status] : ""),
+            filter: "agTextColumnFilter",
           },
-        },
+          { field: "recommendationLabel", headerName: "Claude + rules", cellRenderer: RecommendationCell, width: 160, filter: "agTextColumnFilter" },
+          {
+            field: "finding",
+            headerName: "Top finding",
+            cellRenderer: FindingCell,
+            tooltipField: "finding",
+            tooltipComponent: FindingsTooltip,
+            flex: 1,
+            minWidth: 220,
+            filter: "agTextColumnFilter",
+          },
+          {
+            field: "dueDate",
+            headerName: "Due",
+            cellRenderer: dueCell,
+            valueFormatter: dueFmt,
+            width: 120,
+            filter: "agDateColumnFilter",
+            filterParams: {
+              comparator: (filterDate: Date, cellValue: string | null) => {
+                if (!cellValue) return -1;
+                const cell = new Date(`${cellValue}T00:00:00Z`);
+                const f = Date.UTC(filterDate.getFullYear(), filterDate.getMonth(), filterDate.getDate());
+                const c = Date.UTC(cell.getUTCFullYear(), cell.getUTCMonth(), cell.getUTCDate());
+                return c < f ? -1 : c > f ? 1 : 0;
+              },
+            },
+          },
+        ],
       },
       {
-        field: "invoiceCents",
-        headerName: "Amount",
-        type: "rightAligned",
-        cellClass: "num",
-        width: 120,
-        valueFormatter: moneyFmt,
-        filter: "agNumberColumnFilter",
-        filterValueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? p.data.invoiceCents / 100 : null),
+        headerName: "Amounts (EUR, VAT incl.)",
+        marryChildren: true,
+        children: [
+          { field: "invoiceCents", headerName: "Invoiced", type: "rightAligned", cellClass: "num", width: 116, valueFormatter: moneyFmt, filter: "agNumberColumnFilter", filterValueGetter: euros("invoiceCents") },
+          {
+            field: "withheldCents",
+            headerName: "Withheld",
+            type: "rightAligned",
+            cellClass: "num",
+            cellClassRules: { "text-terracotta": (p) => (p.value as number) > 0 } as CellClassRules<PayableRow>,
+            width: 112,
+            valueFormatter: moneyOrDash,
+            filter: "agNumberColumnFilter",
+            filterValueGetter: euros("withheldCents"),
+          },
+          {
+            field: "discountCents",
+            headerName: "Discount",
+            type: "rightAligned",
+            cellClass: "num",
+            cellClassRules: { "text-olive": (p) => (p.value as number) > 0 } as CellClassRules<PayableRow>,
+            width: 106,
+            valueFormatter: moneyOrDash,
+          },
+          {
+            field: "paidCents",
+            headerName: "Paid",
+            type: "rightAligned",
+            cellClass: "num font-medium",
+            width: 114,
+            enableCellChangeFlash: true,
+            valueFormatter: moneyOrDash,
+            filter: "agNumberColumnFilter",
+            filterValueGetter: euros("paidCents"),
+          },
+          { field: "savedCents", headerName: "Saved", type: "rightAligned", cellRenderer: SavedCell, width: 116 },
+        ],
       },
       {
-        field: "withheldCents",
-        headerName: "Withheld",
-        type: "rightAligned",
-        cellClass: "num",
-        cellClassRules: { "text-terracotta": (p) => (p.value as number) > 0 } as CellClassRules<PayableRow>,
-        width: 118,
-        valueFormatter: moneyOrDash,
-        filter: "agNumberColumnFilter",
-        filterValueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? p.data.withheldCents / 100 : null),
-      },
-      {
-        field: "discountCents",
-        headerName: "Discount",
-        type: "rightAligned",
-        cellClass: "num",
-        cellClassRules: { "text-olive": (p) => (p.value as number) > 0 } as CellClassRules<PayableRow>,
-        width: 112,
-        valueFormatter: moneyOrDash,
-      },
-      {
-        field: "paidCents",
-        headerName: "Paid",
-        type: "rightAligned",
-        cellClass: "num font-medium",
-        width: 120,
-        valueFormatter: moneyOrDash,
-        filter: "agNumberColumnFilter",
-        filterValueGetter: (p: ValueGetterParams<PayableRow>) => (p.data?.paidCents != null ? p.data.paidCents / 100 : null),
-      },
-      {
-        field: "savedCents",
-        headerName: "Saved",
-        type: "rightAligned",
-        cellClass: "num",
-        cellClassRules: { "text-olive font-medium": (p) => (p.value as number) > 0 } as CellClassRules<PayableRow>,
-        width: 112,
-        valueFormatter: moneyOrDash,
-      },
-      {
-        headerName: "PayPal batch · item",
-        colId: "paypal",
-        cellRenderer: PaypalCell,
-        valueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? [p.data.paypalBatchId, p.data.paypalItemId].filter(Boolean).join(" ") : ""),
-        width: 170,
-        filter: "agTextColumnFilter",
+        headerName: "PayPal",
+        children: [
+          {
+            headerName: "Payout batch · item",
+            colId: "paypal",
+            cellRenderer: PaypalCell,
+            enableCellChangeFlash: true,
+            valueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? [p.data.paypalBatchId, p.data.paypalItemId].filter(Boolean).join(" ") : ""),
+            width: 176,
+            filter: "agTextColumnFilter",
+          },
+        ],
       },
     ];
-  }, [today, moneyFmt, moneyOrDash, dueFmt]);
+  }, [today]);
 
-  const defaultColDef = useMemo<ColDef<PayableRow>>(
-    () => ({ sortable: true, resizable: true, filter: true, floatingFilter: true, suppressHeaderMenuButton: false }),
-    [],
-  );
+  const defaultColDef = useMemo<ColDef<PayableRow>>(() => ({ sortable: true, resizable: true, filter: true, floatingFilter: true }), []);
 
-  // Recompute the live totals row and the group-summary strip from the rows that
-  // currently pass the filter (quick filter + column filters + status chips).
+  // Recompute the totals row, the subtotal strip and the chart from the rows that currently
+  // pass every filter (quick search + column filters + status chips + chart selection).
   const recompute = useCallback(() => {
     const api = apiRef.current;
     if (!api) return;
-    let count = 0;
-    let invoice = 0;
-    let withheld = 0;
-    let discount = 0;
-    let paid = 0;
-    let saved = 0;
-    const map = new Map<string, GroupSummary>();
     const groupBy = groupRef.current;
+    const t = { count: 0, invoice: 0, withheld: 0, discount: 0, paid: 0, saved: 0 };
+    const map = new Map<string, GroupSummary>();
+    const money = new Map<string, SupplierMoney>();
     api.forEachNodeAfterFilter((node: IRowNode<PayableRow>) => {
       const d = node.data;
       if (!d) return;
-      count++;
-      invoice += d.invoiceCents;
-      withheld += d.withheldCents;
-      discount += d.discountCents;
-      paid += d.paidCents ?? 0;
-      saved += d.savedCents;
+      t.count++;
+      t.invoice += d.invoiceCents;
+      t.withheld += d.withheldCents;
+      t.discount += d.discountCents;
+      t.paid += d.paidCents ?? 0;
+      t.saved += d.savedCents;
       if (groupBy !== "none") {
         const key = groupBy === "supplier" ? d.supplier : d.status;
-        const label = groupBy === "supplier" ? d.supplier : STATUS_LABEL[d.status];
-        const tone = groupBy === "supplier" ? "border-line bg-paper text-ink-2" : STATUS_PILL[d.status];
-        const g = map.get(key) ?? { key, label, tone, count: 0, cents: 0 };
+        const g = map.get(key) ?? {
+          key,
+          label: groupBy === "supplier" ? d.supplier : STATUS_LABEL[d.status],
+          tone: groupBy === "supplier" ? "border-line bg-paper text-ink-2" : STATUS_PILL[d.status],
+          count: 0,
+          cents: 0,
+        };
         g.count++;
         g.cents += d.invoiceCents;
         map.set(key, g);
       }
+      const m = money.get(d.supplier) ?? { supplier: d.supplier, paid: 0, toPay: 0, withheld: 0, held: 0 };
+      if (d.status === "held") m.held += d.invoiceCents / 100;
+      else {
+        const paid = d.paidCents ?? 0;
+        m.paid += paid / 100;
+        m.withheld += d.withheldCents / 100;
+        if (d.status !== "paid" && d.status !== "sent") m.toPay += Math.max(0, d.invoiceCents - d.withheldCents - paid) / 100;
+      }
+      money.set(d.supplier, m);
     });
-    setTotals({ __total: true, id: "__totals__", supplier: "Totals", count, invoiceCents: invoice, withheldCents: withheld, discountCents: discount, paidCents: paid, savedCents: saved });
-    if (groupBy === "status") {
-      setGroups([...map.values()].sort((a, b) => STATUS_ORDER.indexOf(a.key as PayableStatus) - STATUS_ORDER.indexOf(b.key as PayableStatus)));
-    } else {
-      setGroups([...map.values()].sort((a, b) => b.cents - a.cents));
-    }
+    setTotals({ __total: true, id: "__totals__", supplier: "Totals", count: t.count, invoiceCents: t.invoice, withheldCents: t.withheld, discountCents: t.discount, paidCents: t.paid, savedCents: t.saved });
+    const list = [...map.values()];
+    setGroups(groupBy === "status" ? list.sort((a, b) => STATUS_ORDER.indexOf(a.key as PayableStatus) - STATUS_ORDER.indexOf(b.key as PayableStatus)) : list.sort((a, b) => b.cents - a.cents));
+    const size = (m: SupplierMoney) => m.paid + m.toPay + m.withheld + m.held;
+    setChartData([...money.values()].sort((a, b) => size(b) - size(a)));
   }, []);
 
   const applyGroupSort = useCallback((key: GroupKey, api: GridApi<PayableRow>) => {
@@ -421,25 +477,38 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
   );
 
   const toggleStatus = useCallback((s: PayableStatus) => {
-    setActive((prev) => {
-      const next = new Set(prev);
-      if (next.has(s)) next.delete(s);
-      else next.add(s);
-      activeRef.current = next;
-      apiRef.current?.onFilterChanged();
-      return next;
-    });
-  }, []);
-
-  const clearStatus = useCallback(() => {
-    const next = new Set<PayableStatus>();
-    setActive(next);
+    const next = new Set(activeRef.current);
+    if (next.has(s)) next.delete(s);
+    else next.add(s);
     activeRef.current = next;
+    setActive(next);
     apiRef.current?.onFilterChanged();
   }, []);
 
-  const isExternalFilterPresent = useCallback(() => activeRef.current.size > 0, []);
-  const doesExternalFilterPass = useCallback((node: IRowNode<PayableRow>) => (node.data ? activeRef.current.has(node.data.status) : true), []);
+  // The chart only sets state (it is configured during render); the effect below applies it to the grid.
+  const pickSupplier = useCallback((name: string | null) => setSupplier((prev) => (name && prev === name ? null : name)), []);
+  useEffect(() => {
+    supplierRef.current = supplier;
+    apiRef.current?.onFilterChanged();
+  }, [supplier]);
+
+  const clearAll = useCallback(() => {
+    activeRef.current = new Set();
+    setActive(new Set());
+    setSupplier(null);
+    setQuick("");
+    apiRef.current?.setFilterModel(null);
+    apiRef.current?.onFilterChanged();
+  }, []);
+
+  const isExternalFilterPresent = useCallback(() => activeRef.current.size > 0 || supplierRef.current !== null, []);
+  const doesExternalFilterPass = useCallback((node: IRowNode<PayableRow>) => {
+    const d = node.data;
+    if (!d) return true;
+    if (activeRef.current.size > 0 && !activeRef.current.has(d.status)) return false;
+    if (supplierRef.current !== null && d.supplier !== supplierRef.current) return false;
+    return true;
+  }, []);
 
   const exportCsv = useCallback(() => {
     apiRef.current?.exportDataAsCsv({
@@ -459,12 +528,29 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
   }, [today]);
 
   const pinnedBottom = useMemo(() => (totals ? [totals as unknown as PayableRow] : []), [totals]);
+  const chartOptions = useMemo(() => moneyChartOptions(chartData, supplier, pickSupplier), [chartData, supplier, pickSupplier]);
+  const filtered = active.size > 0 || supplier !== null || quick.trim() !== "";
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+      {/* Chart: where each supplier's euros stand. Click a bar to filter the grid. */}
+      <div className="rounded-xl border border-line bg-card">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 px-4 pt-3">
+          <p className="text-sm font-medium text-ink">Where the money stands, by supplier</p>
+          <p className="text-xs text-muted">{supplier ? `Showing ${supplier} · click its bar again to clear` : "Click a bar to filter the grid · follows every grid filter"}</p>
+        </div>
+        <div className="h-[260px] w-full px-1 pb-1">
+          {chartData.length > 0 ? (
+            <AgCharts options={chartOptions} style={{ height: "100%", width: "100%" }} />
+          ) : (
+            <p className="grid h-full place-items-center text-sm text-muted">No invoices match the current filters.</p>
+          )}
+        </div>
+      </div>
+
       {/* Toolbar: search · group-by · export */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[200px]">
+        <div className="relative min-w-[200px] flex-1">
           <input
             type="search"
             value={quick}
@@ -479,7 +565,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
           </svg>
         </div>
 
-        <div className="inline-flex items-center rounded-full border border-line bg-paper p-0.5 text-xs">
+        <div className="inline-flex items-center rounded-full border border-line bg-paper p-0.5 text-xs" role="group" aria-label="Group the subtotal strip">
           <span className="px-2 text-muted">Group</span>
           {(["status", "supplier", "none"] as GroupKey[]).map((k) => (
             <button
@@ -510,11 +596,11 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
       <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by status">
         <button
           type="button"
-          onClick={clearStatus}
-          aria-pressed={active.size === 0}
-          className={cx("rounded-full border px-3 py-1 text-xs font-medium transition", active.size === 0 ? "border-ink bg-ink text-paper" : "border-line bg-card text-ink-2 hover:border-line-2")}
+          onClick={clearAll}
+          aria-pressed={!filtered}
+          className={cx("rounded-full border px-3 py-1 text-xs font-medium transition", !filtered ? "border-ink bg-ink text-paper" : "border-line bg-card text-ink-2 hover:border-line-2")}
         >
-          All <span className="num opacity-70">{rows.length}</span>
+          {filtered ? "Clear filters" : "All"} <span className="num opacity-70">{rows.length}</span>
         </button>
         {presentStatuses.map((s) => {
           const n = rows.filter((r) => r.status === s).length;
@@ -531,6 +617,12 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
             </button>
           );
         })}
+        {supplier && (
+          <button type="button" onClick={() => pickSupplier(null)} className="rounded-full border border-ledger/30 bg-ledger-soft px-3 py-1 text-xs font-medium text-ledger">
+            Supplier: {supplier} <span aria-hidden>×</span>
+            <span className="sr-only">clear supplier filter</span>
+          </button>
+        )}
       </div>
 
       {/* Group subtotal strip (live, filter-aware) */}
@@ -539,7 +631,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
           <span className="text-muted">{groupBy === "status" ? "By status:" : "By supplier:"}</span>
           {groups.map((g) => (
             <span key={g.key} className={cx("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-medium", g.tone)}>
-              <span className="capitalize">{g.label}</span>
+              <span>{g.label}</span>
               <span className="opacity-70">{g.count}</span>
               <span className="num opacity-70">· {fmt(g.cents)}</span>
             </span>
@@ -547,12 +639,13 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         </div>
       )}
 
-      <div style={{ height: 560, width: "100%" }}>
+      <div style={{ height: 520, width: "100%" }}>
         <AgGridReact<PayableRow>
           theme={supploraTheme}
           rowData={rows}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
+          context={context}
           getRowId={(p) => p.data.id}
           quickFilterText={quick}
           onGridReady={onGridReady}
@@ -562,17 +655,18 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
           isExternalFilterPresent={isExternalFilterPresent}
           doesExternalFilterPass={doesExternalFilterPass}
           pinnedBottomRowData={pinnedBottom}
+          tooltipShowDelay={200}
+          tooltipHideDelay={12000}
           animateRows
           suppressCellFocus
-          rowHeight={52}
-          headerHeight={42}
+          groupHeaderHeight={34}
           overlayNoRowsTemplate="No invoices match the current filters."
         />
       </div>
 
       <p className="text-xs text-muted">
-        {rows.length} reviewed invoice{rows.length === 1 ? "" : "s"}. Click a supplier or invoice to open the full review. Sort any column, filter in the header
-        row, search, slice by status, or group — the totals row stays in sync with what is on screen.
+        {rows.length} reviewed invoice{rows.length === 1 ? "" : "s"}. Hover a finding for the evidence behind it; click a supplier or invoice for the full review. Every filter
+        (search, header filters, chips, chart) drives the totals row, the subtotal strip and the chart.
       </p>
     </div>
   );

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { connection } from "next/server";
 import { AuditLog } from "@/components/client/AuditLog";
 import { PayablesSection } from "@/components/client/PayablesSection";
+import { ReconcilePanel } from "@/components/client/ReconcilePanel";
 import { orderStatus } from "@/components/OrderCard";
 import { Card, Kpi, Mono, PageHeader, Pill, SectionTitle } from "@/components/ui";
 import { supplierById } from "@/data/seed";
@@ -65,7 +66,7 @@ export default async function LedgerPage() {
           id="invoices"
           kicker="Accounts payable"
           title="Payables"
-          aside={<span className="text-xs text-muted">Interactive grid · AG Grid</span>}
+          aside={<span className="text-xs text-muted">AG Grid + AG Charts (Community) · cross-filtered</span>}
         />
         {payableRows.length === 0 ? (
           <Card className="px-6 py-10 text-center text-muted">Nothing reviewed yet. Review the inbox to populate the ledger.</Card>
@@ -74,6 +75,13 @@ export default async function LedgerPage() {
             <PayablesSection rows={payableRows} today={today} />
           </Card>
         )}
+      </section>
+
+      <section aria-labelledby="reconcile-title">
+        <SectionTitle id="reconcile-title" kicker="PayPal Agent Toolkit · REST Payouts" title="Reconcile with PayPal" />
+        <Card className="p-5 sm:p-6">
+          <ReconcilePanel last={state.reconciliation ?? null} hasPayments={state.batches.length > 0 || state.orders.length > 0} />
+        </Card>
       </section>
 
       {state.orders.length > 0 && (

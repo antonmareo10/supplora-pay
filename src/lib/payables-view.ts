@@ -28,6 +28,8 @@ export interface PayableRow {
   finding: string;
   findingSeverity: Severity | null;
   findingCount: number;
+  /** Every finding with its evidence, most severe first (shown in the grid's tooltip). */
+  findings: { title: string; severity: Severity; detail: string; withholdCents: number; impactCents: number }[];
   dueDate: string | null;
   invoiceCents: number;
   withheldCents: number;
@@ -79,6 +81,7 @@ export function buildPayableRows(state: AppState): PayableRow[] {
       finding: top ? top.title : "No issues found",
       findingSeverity: top ? top.severity : null,
       findingCount: r.findings.length,
+      findings: findings.slice(0, 6).map((f) => ({ title: f.title, severity: f.severity, detail: f.detail, withholdCents: f.withholdCents, impactCents: f.impactCents })),
       dueDate: r.dueDate,
       invoiceCents: e.invoiceCents,
       withheldCents: e.withheldCents,
