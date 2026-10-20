@@ -1,0 +1,30 @@
+# Render Blueprint for the keyless public demo (Dashboard → New → Blueprint → this repo).
+# Secrets use `sync: false`: Render asks for them once when the Blueprint is created and never
+# stores them in the repo. See docs/DEPLOY.md.
+services:
+  - type: web
+    name: supplora-pay
+    runtime: node
+    # "free" spins down after 15 idle minutes (about a minute to wake) and loses the demo's
+    # in-memory sessions; use "starter" during judging.
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci && npm run build
+    startCommand: npx next start -H 0.0.0.0 -p $PORT
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: DEMO_MODE
+        value: "1"
+      - key: PAYPAL_BASE_URL
+        value: https://api-m.sandbox.paypal.com
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      # Optional: a sandbox *personal* account email; every supplier payout goes there and ends
+      # SUCCESS instead of UNCLAIMED.
+      - key: PAYPAL_PAYOUT_RECEIVER_OVERRIDE
+        sync: false

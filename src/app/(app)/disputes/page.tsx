@@ -6,7 +6,7 @@ import { DocThumb } from "@/components/DocCard";
 import { ACTION_TONE, Card, Empty, PageHeader, Pill, Stamp } from "@/components/ui";
 import { supplierById } from "@/data/seed";
 import { ACTION_LABEL, effective } from "@/lib/ap";
-import { claudeConfigured } from "@/lib/claude";
+import { claudeAvailable } from "@/lib/claude";
 import { fmtDateTime } from "@/lib/dates";
 import { needsDispute } from "@/lib/disputes";
 import { fmt } from "@/lib/money";
@@ -19,7 +19,7 @@ export default async function DisputesPage() {
   const state = await readState();
   const docs = state.documents.filter(needsDispute);
   const total = docs.reduce((s, d) => s + effective(d)!.withheldCents, 0);
-  const claudeReady = claudeConfigured();
+  const claudeReady = claudeAvailable();
 
   return (
     <div>

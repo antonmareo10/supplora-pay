@@ -5,9 +5,10 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { DELIVERY_NOTES, RESTAURANT, supplierById } from "@/data/seed";
 import { effective } from "./ap";
-import { anthropic, claudeErrorMessage, MODEL, usageLabel } from "./claude";
+import { anthropic, claudeErrorMessage, claudeMode, MODEL, usageLabel } from "./claude";
 import { fmtDay } from "./dates";
 import { fmt } from "./money";
+import { fingerprint, recordedDispute, recordMode, saveRecordedDispute } from "./recordings";
 import { auditEntry, readState, updateState } from "./state";
 import type { DocumentRecord } from "./types";
 
@@ -64,9 +65,56 @@ export async function draftDispute(docId: string): Promise<DocumentRecord> {
   };
 
   const language = supplier.language === "es" ? "Spanish (Spain)" : "English";
+  // Recordings are keyed by the exact facts Claude saw; this session's payout batch id is the
+  // only value that legitimately differs between runs, so it is normalised out and swapped back.
+  const BATCH = "{PAYOUT_BATCH}";
+  const batchId = doc.payment.batchId;
+  const factsKey = fingerprint({ language, facts: batchId ? JSON.parse(JSON.stringify(facts).replaceAll(batchId, BATCH)) : facts });
   const started = Date.now();
   let subject: string;
   let body: string;
+  if (claudeMode() === "replay") {
+    const rec = recordedDispute(factsKey);
+    const swap = (text: string) => (rec?.placeholders[BATCH] && batchId ? text.replaceAll(rec.placeholders[BATCH], batchId) : text);
+    if (rec) {
+      subject = swap(rec.subject);
+      body = swap(rec.body);
+    } else {
+      // No recording for this exact situation: a plain template, clearly labelled.
+      subject = `Invoice ${r.extraction.invoice_number ?? ""}: request for a credit note`.trim();
+      body = [
+        `Dear ${supplier.contactName},`,
+        "",
+        `About invoice ${r.extraction.invoice_number} of ${r.extraction.invoice_date} (${fmt(r.invoiceCents)}). ${paidPart}`,
+        "",
+        ...issues.map((f) => `- ${f.title}: ${f.detail}`),
+        "",
+        e.action === "hold" ? "Could you confirm this invoice can be cancelled?" : `Could you send us a credit note for ${fmt(e.withheldCents)}?`,
+        "",
+        "Kind regards,",
+        RESTAURANT.owner,
+        RESTAURANT.name,
+        "",
+        "[Demo fallback template: no recorded Claude draft matches this exact situation.]",
+      ].join("\n");
+    }
+    await updateState((s) => {
+      s.audit.push(
+        auditEntry({
+          actor: "claude",
+          message: rec
+            ? `Demo replay of Claude's recorded credit-note request to ${supplier.name} for ${r.extraction.invoice_number} (${rec.model}, ${rec.recordedAt.slice(0, 10)})`
+            : `Demo fallback: template credit-note request to ${supplier.name} for ${r.extraction.invoice_number} (no recorded draft for this situation)`,
+          ref: { docId },
+        }),
+      );
+    });
+    return updateState((s) => {
+      const d = s.documents.find((x) => x.id === docId)!;
+      d.dispute = { status: "drafted", subject, body, to: supplier.email, language: supplier.language, createdAt: new Date().toISOString() };
+      return d;
+    });
+  }
   try {
     const res = await anthropic().messages.parse({
       model: MODEL,
@@ -83,6 +131,17 @@ export async function draftDispute(docId: string): Promise<DocumentRecord> {
     if (res.stop_reason === "refusal" || !res.parsed_output) throw new Error("Claude could not draft this email.");
     subject = res.parsed_output.subject.trim();
     body = res.parsed_output.body.trim();
+    if (recordMode()) {
+      await saveRecordedDispute(factsKey, {
+        docId,
+        invoiceNumber: r.extraction.invoice_number,
+        model: res.model,
+        recordedAt: new Date().toISOString(),
+        subject,
+        body,
+        placeholders: batchId ? { [BATCH]: batchId } : {},
+      });
+    }
     await updateState((s) => {
       s.audit.push(
         auditEntry({

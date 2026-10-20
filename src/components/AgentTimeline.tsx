@@ -12,7 +12,11 @@ interface ToolRow {
   error?: boolean;
   done: boolean;
 }
-type Row = ToolRow | { kind: "note"; text: string; key: string } | { kind: "error"; message: string; key: string };
+type Row =
+  | ToolRow
+  | { kind: "note"; text: string; key: string }
+  | { kind: "info"; text: string; tone: "replay" | "fallback"; key: string }
+  | { kind: "error"; message: string; key: string };
 
 export function toRows(events: AgentEvent[]): Row[] {
   const rows: Row[] = [];
@@ -33,11 +37,80 @@ export function toRows(events: AgentEvent[]): Row[] {
         row.error = e.error;
         row.done = true;
       }
+    } else if (e.type === "info") {
+      rows.push({ kind: "info", text: e.text, tone: e.tone, key: `i${i}` });
     } else if (e.type === "error") {
       rows.push({ kind: "error", message: e.message, key: `e${i}` });
     }
   });
   return rows;
+}
+
+/** **bold** spans (the only inline markup Claude's notes use). React escapes the text. */
+function Inline({ text }: { text: string }) {
+  const parts = text.split("**");
+  return <>{parts.map((part, i) => (i % 2 ? <strong key={i} className="font-semibold text-ink">{part}</strong> : part))}</>;
+}
+
+/**
+ * Claude's notes: one-liners stay as italic asides; longer messages (the agent's final summary
+ * for the owner) get light Markdown: paragraphs, bullet lists and pipe tables.
+ */
+function NoteText({ text }: { text: string }) {
+  const lines = text.split("\n");
+  if (lines.length === 1) return <span className="italic"><Inline text={text} /></span>;
+  const blocks: { kind: "p" | "ul" | "table"; lines: string[] }[] = [];
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const kind = line.trimStart().startsWith("|") ? "table" : /^\s*[-*] /.test(line) ? "ul" : line.trim() ? "p" : null;
+    if (!kind) {
+      blocks.push({ kind: "p", lines: [] });
+      continue;
+    }
+    const last = blocks[blocks.length - 1];
+    if (last && last.kind === kind && (kind !== "p" || last.lines.length)) last.lines.push(line);
+    else blocks.push({ kind, lines: [line] });
+  }
+  return (
+    <div className="space-y-2 not-italic text-ink-2">
+      {blocks.filter((b) => b.lines.length).map((b, i) => {
+        if (b.kind === "ul") {
+          return (
+            <ul key={i} className="list-disc space-y-1 pl-5">
+              {b.lines.map((l, j) => <li key={j}><Inline text={l.replace(/^\s*[-*] /, "")} /></li>)}
+            </ul>
+          );
+        }
+        if (b.kind === "table") {
+          const cells = (l: string) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+          const [head, ...body] = b.lines.filter((l) => !/^\s*\|?\s*:?-{2,}/.test(l));
+          return (
+            <div key={i} className="overflow-x-auto">
+              <table className="w-full min-w-[420px] text-left text-[12.5px]">
+                <thead>
+                  <tr className="border-b border-line text-[11px] uppercase tracking-wider text-muted">{cells(head).map((c, j) => <th key={j} className="py-1 pr-3 font-semibold">{c}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {body.map((r, j) => (
+                    <tr key={j} className="border-b border-line/70 last:border-0">{cells(r).map((c, k) => <td key={k} className="py-1 pr-3 align-top"><Inline text={c} /></td>)}</tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+        return <p key={i}>{b.lines.map((l, j) => <span key={j}>{j > 0 && <br />}<Inline text={l} /></span>)}</p>;
+      })}
+    </div>
+  );
+}
+
+function IconPlay() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M7 4.5v15l13-7.5z" />
+    </svg>
+  );
 }
 
 export function AgentTimeline({ events, running }: { events: AgentEvent[]; running?: boolean }) {
@@ -48,11 +121,24 @@ export function AgentTimeline({ events, running }: { events: AgentEvent[]; runni
       {rows.map((row) => {
         if (row.kind === "note") {
           return (
-            <li key={row.key} className="relative text-[13.5px] italic leading-relaxed text-ink-2">
+            <li key={row.key} className="relative text-[13.5px] leading-relaxed text-ink-2">
               <span className="absolute -left-[27px] top-0.5 grid h-3.5 w-3.5 place-items-center rounded-full bg-paper text-[#5b2b6e]">
                 <IconSpark size={12} />
               </span>
-              {row.text}
+              <NoteText text={row.text} />
+            </li>
+          );
+        }
+        if (row.kind === "info") {
+          return (
+            <li key={row.key} className="relative">
+              <span className="absolute -left-[27px] top-1 grid h-3.5 w-3.5 place-items-center rounded-full bg-paper text-ledger" aria-hidden="true">
+                <IconPlay />
+              </span>
+              <p className={cx("rounded-lg border px-3 py-2 text-[12.5px] leading-relaxed", row.tone === "replay" ? "border-ledger/20 bg-ledger-soft text-ledger" : "border-saffron/30 bg-saffron-soft text-[#8a5a0c]")}>
+                <span className="mr-1.5 font-semibold uppercase tracking-wider">{row.tone === "replay" ? "Demo replay" : "Fallback"}</span>
+                {row.text}
+              </p>
             </li>
           );
         }

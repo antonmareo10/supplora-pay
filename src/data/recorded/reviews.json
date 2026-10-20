@@ -1,0 +1,538 @@
+{
+ "about": "Real Claude outputs recorded by the app itself (RECORD_DEMO=1, see src/lib/recordings.ts). DEMO_MODE replays them instead of calling the API.",
+ "entries": {
+  "01-huerta-guadalhorce.png": {
+   "sha256": "0bf779d6dbd1a2223f5a377b8d7c9a65408e60694b285fa21656b8ed32b9b89c",
+   "promptVersion": "review-v1",
+   "model": "claude-opus-5-5",
+   "recordedAt": "2026-10-16T15:36:52.166Z",
+   "durationMs": 9983,
+   "usage": "7,167 in / 1,099 out tokens",
+   "extraction": {
+    "document_type": "invoice",
+    "language": "es",
+    "supplier_name": "Huerta del Guadalhorce S.L.",
+    "supplier_tax_id": "B29123456",
+    "matched_supplier_id": "huerta-guadalhorce",
+    "payment_email": "cobros@huertaguadalhorce.example",
+    "invoice_number": "HG-2026/0418",
+    "invoice_date": "2026-10-09",
+    "due_date": "2026-10-23",
+    "payment_terms": "Pago a 14 días",
+    "early_payment_discount": null,
+    "delivery_note_refs": [
+     "AL-1092"
+    ],
+    "currency": "EUR",
+    "lines": [
+     {
+      "description": "Tomate rosa",
+      "matched_item_key": "hg.tomate-rosa",
+      "quantity": 12,
+      "unit": "kg",
+      "unit_price": 2.85,
+      "line_total": 34.2,
+      "vat_rate_percent": 4
+     },
+     {
+      "description": "Aguacate Hass",
+      "matched_item_key": "hg.aguacate",
+      "quantity": 6,
+      "unit": "kg",
+      "unit_price": 4.2,
+      "line_total": 28.2,
+      "vat_rate_percent": 4
+     },
+     {
+      "description": "Patata agria",
+      "matched_item_key": "hg.patata",
+      "quantity": 25,
+      "unit": "kg",
+      "unit_price": 0.95,
+      "line_total": 23.75,
+      "vat_rate_percent": 4
+     },
+     {
+      "description": "Cebolla dulce",
+      "matched_item_key": "hg.cebolla",
+      "quantity": 10,
+      "unit": "kg",
+      "unit_price": 1.4,
+      "line_total": 14,
+      "vat_rate_percent": 4
+     },
+     {
+      "description": "Pimiento italiano",
+      "matched_item_key": "hg.pimiento",
+      "quantity": 6,
+      "unit": "kg",
+      "unit_price": 2.6,
+      "line_total": 15.6,
+      "vat_rate_percent": 4
+     },
+     {
+      "description": "Limón",
+      "matched_item_key": "hg.limon",
+      "quantity": 8,
+      "unit": "kg",
+      "unit_price": 1.9,
+      "line_total": 15.2,
+      "vat_rate_percent": 4
+     },
+     {
+      "description": "Lechuga romana",
+      "matched_item_key": "hg.lechuga",
+      "quantity": 18,
+      "unit": "ud",
+      "unit_price": 0.85,
+      "line_total": 15.3,
+      "vat_rate_percent": 4
+     },
+     {
+      "description": "Hierbabuena (manojo)",
+      "matched_item_key": "hg.hierbabuena",
+      "quantity": 10,
+      "unit": "manojo",
+      "unit_price": 0.9,
+      "line_total": 9,
+      "vat_rate_percent": 4
+     }
+    ],
+    "subtotal": 155.25,
+    "vat_total": 6.21,
+    "total": 161.46,
+    "observations": [],
+    "legibility": "clear"
+   }
+  },
+  "02-pescados-bahia.png": {
+   "sha256": "a57d0d057789d3f60e639eb43a2b5b46c77485c75cc20952f5734d56e0b3418d",
+   "promptVersion": "review-v1",
+   "model": "claude-opus-5-5",
+   "recordedAt": "2026-10-16T15:22:13.177Z",
+   "durationMs": 9732,
+   "usage": "7,167 in / 762 out tokens",
+   "extraction": {
+    "document_type": "invoice",
+    "language": "es",
+    "supplier_name": "Pescados Bahía de Málaga S.L.",
+    "supplier_tax_id": "B29654321",
+    "matched_supplier_id": "pescados-bahia",
+    "payment_email": "cobros@pescadosbahia.example",
+    "invoice_number": "FPB-26-1187",
+    "invoice_date": "2026-10-13",
+    "due_date": "2026-10-20",
+    "payment_terms": "Vencimiento 7 días fecha factura",
+    "early_payment_discount": null,
+    "delivery_note_refs": [
+     "AL-5521"
+    ],
+    "currency": "EUR",
+    "lines": [
+     {
+      "description": "Merluza de pincho",
+      "matched_item_key": "pb.merluza",
+      "quantity": 14,
+      "unit": "kg",
+      "unit_price": 13.8,
+      "line_total": 193.2,
+      "vat_rate_percent": 10
+     },
+     {
+      "description": "Boquerón fresco",
+      "matched_item_key": "pb.boqueron",
+      "quantity": 8,
+      "unit": "kg",
+      "unit_price": 6.5,
+      "line_total": 52,
+      "vat_rate_percent": 10
+     },
+     {
+      "description": "Pulpo cocido",
+      "matched_item_key": "pb.pulpo",
+      "quantity": 5,
+      "unit": "kg",
+      "unit_price": 22.4,
+      "line_total": 112,
+      "vat_rate_percent": 10
+     },
+     {
+      "description": "Gamba blanca de Huelva",
+      "matched_item_key": "pb.gamba",
+      "quantity": 3,
+      "unit": "kg",
+      "unit_price": 34,
+      "line_total": 102,
+      "vat_rate_percent": 10
+     },
+     {
+      "description": "Calamar",
+      "matched_item_key": "pb.calamar",
+      "quantity": 6,
+      "unit": "kg",
+      "unit_price": 12.8,
+      "line_total": 76.8,
+      "vat_rate_percent": 10
+     }
+    ],
+    "subtotal": 536,
+    "vat_total": 53.6,
+    "total": 589.6,
+    "observations": [],
+    "legibility": "clear"
+   }
+  },
+  "03-carnicas-sanz.png": {
+   "sha256": "bc00bd6249e65f09457fa52b317339a38d8ca9f81d5e659a7a4c9a87b0232b6c",
+   "promptVersion": "review-v1",
+   "model": "claude-opus-5-5",
+   "recordedAt": "2026-10-16T15:36:49.574Z",
+   "durationMs": 7408,
+   "usage": "7,167 in / 895 out tokens",
+   "extraction": {
+    "document_type": "invoice",
+    "language": "es",
+    "supplier_name": "Cárnicas Hermanos Sanz",
+    "supplier_tax_id": "B18765432",
+    "matched_supplier_id": "carnicas-sanz",
+    "payment_email": "pagos@carnicassanz.example",
+    "invoice_number": "CHS-7731",
+    "invoice_date": "2026-10-10",
+    "due_date": "2026-10-30",
+    "payment_terms": "Pago a 20 días",
+    "early_payment_discount": null,
+    "delivery_note_refs": [
+     "AL-3307"
+    ],
+    "currency": "EUR",
+    "lines": [
+     {
+      "description": "Presa ibérica",
+      "matched_item_key": "cs.presa",
+      "quantity": 12,
+      "unit": "kg",
+      "unit_price": 18.5,
+      "line_total": 222,
+      "vat_rate_percent": 10
+     },
+     {
+      "description": "Secreto ibérico",
+      "matched_item_key": "cs.secreto",
+      "quantity": 6,
+      "unit": "kg",
+      "unit_price": 16.9,
+      "line_total": 101.4,
+      "vat_rate_percent": 10
+     },
+     {
+      "description": "Solomillo de ternera",
+      "matched_item_key": "cs.solomillo",
+      "quantity": 4,
+      "unit": "kg",
+      "unit_price": 32,
+      "line_total": 128,
+      "vat_rate_percent": 10
+     },
+     {
+      "description": "Pollo de corral",
+      "matched_item_key": "cs.pollo",
+      "quantity": 8,
+      "unit": "ud",
+      "unit_price": 9.75,
+      "line_total": 78,
+      "vat_rate_percent": 10
+     },
+     {
+      "description": "Chorizo ibérico",
+      "matched_item_key": "cs.chorizo",
+      "quantity": 3,
+      "unit": "kg",
+      "unit_price": 14.2,
+      "line_total": 42.6,
+      "vat_rate_percent": 10
+     },
+     {
+      "description": "Lomo de cerdo",
+      "matched_item_key": "cs.lomo",
+      "quantity": 7.5,
+      "unit": "kg",
+      "unit_price": 7.8,
+      "line_total": 58.5,
+      "vat_rate_percent": 10
+     }
+    ],
+    "subtotal": 630.5,
+    "vat_total": 63.05,
+    "total": 693.55,
+    "observations": [],
+    "legibility": "clear"
+   }
+  },
+  "04-green-valley-dairy.png": {
+   "sha256": "6ffe891dd8a22b7cfcc3ab29e34a186dcff618b205920c60fcc281559782d182",
+   "promptVersion": "review-v1",
+   "model": "claude-opus-5-5",
+   "recordedAt": "2026-10-16T15:36:55.854Z",
+   "durationMs": 13664,
+   "usage": "7,167 in / 1,040 out tokens",
+   "extraction": {
+    "document_type": "invoice",
+    "language": "en",
+    "supplier_name": "Green Valley Dairy Co.",
+    "supplier_tax_id": "ESW0012345B",
+    "matched_supplier_id": "green-valley",
+    "payment_email": "payments@greenvalleydairy.example",
+    "invoice_number": "GVD-2291",
+    "invoice_date": "2026-10-02",
+    "due_date": "2026-11-01",
+    "payment_terms": "Net 30 days",
+    "early_payment_discount": null,
+    "delivery_note_refs": [
+     "DN-88412"
+    ],
+    "currency": "EUR",
+    "lines": [
+     {
+      "description": "Whole milk 1L (case of 12)",
+      "matched_item_key": "gv.milk",
+      "quantity": 6,
+      "unit": "case",
+      "unit_price": 10.2,
+      "line_total": 61.2,
+      "vat_rate_percent": 4
+     },
+     {
+      "description": "Double cream 1L",
+      "matched_item_key": "gv.cream",
+      "quantity": 8,
+      "unit": "unit",
+      "unit_price": 4.35,
+      "line_total": 34.8,
+      "vat_rate_percent": 10
+     },
+     {
+      "description": "Unsalted butter 1kg",
+      "matched_item_key": "gv.butter",
+      "quantity": 5,
+      "unit": "unit",
+      "unit_price": 9.6,
+      "line_total": 48,
+      "vat_rate_percent": 10
+     },
+     {
+      "description": "Manchego curado 3kg wheel",
+      "matched_item_key": "gv.manchego",
+      "quantity": 2,
+      "unit": "unit",
+      "unit_price": 41.5,
+      "line_total": 83,
+      "vat_rate_percent": 4
+     },
+     {
+      "description": "Greek yogurt 1kg",
+      "matched_item_key": "gv.yogurt",
+      "quantity": 6,
+      "unit": "unit",
+      "unit_price": 5.1,
+      "line_total": 30.6,
+      "vat_rate_percent": 10
+     }
+    ],
+    "subtotal": 257.6,
+    "vat_total": 17.11,
+    "total": 274.71,
+    "observations": [
+     {
+      "text": "Document is stamped 'PAYMENT REMINDER · COPY': it is a copy/reminder of invoice GVD-2291. Check that the original has not already been paid, to avoid paying twice.",
+      "severity": "warning"
+     },
+     {
+      "text": "Total VAT is not printed as a single figure; 17.11 is the sum of the printed VAT 4% (5.77) and VAT 10% (11.34).",
+      "severity": "info"
+     }
+    ],
+    "legibility": "clear"
+   }
+  },
+  "05-atlantic-wine.png": {
+   "sha256": "4e0f8bd48020f8770412448800e77980912f455dd1a64bcef2b5eded7ef99f5e",
+   "promptVersion": "review-v1",
+   "model": "claude-opus-5-5",
+   "recordedAt": "2026-10-16T15:37:03.113Z",
+   "durationMs": 13487,
+   "usage": "7,167 in / 1,085 out tokens",
+   "extraction": {
+    "document_type": "invoice",
+    "language": "en",
+    "supplier_name": "Atlantic Wine & Spirits Ltd.",
+    "supplier_tax_id": "ESN0067890H",
+    "matched_supplier_id": "atlantic-wine",
+    "payment_email": "payments@atlanticwine.example",
+    "invoice_number": "AWS-50317",
+    "invoice_date": "2026-10-14",
+    "due_date": "2026-11-13",
+    "payment_terms": "2/10 net 30 — deduct 2% if paid within 10 days of invoice date",
+    "early_payment_discount": {
+     "percent": 2,
+     "within_days": 10
+    },
+    "delivery_note_refs": [
+     "DN-2210"
+    ],
+    "currency": "EUR",
+    "lines": [
+     {
+      "description": "Rioja Crianza 75cl",
+      "matched_item_key": "aw.rioja",
+      "quantity": 24,
+      "unit": "bottle",
+      "unit_price": 7.9,
+      "line_total": 189.6,
+      "vat_rate_percent": 21
+     },
+     {
+      "description": "Albariño Rías Baixas 75cl",
+      "matched_item_key": "aw.albarino",
+      "quantity": 18,
+      "unit": "bottle",
+      "unit_price": 9.4,
+      "line_total": 169.2,
+      "vat_rate_percent": 21
+     },
+     {
+      "description": "Cerveza Victoria 33cl (case of 24)",
+      "matched_item_key": "aw.victoria",
+      "quantity": 20,
+      "unit": "case",
+      "unit_price": 17.8,
+      "line_total": 356,
+      "vat_rate_percent": 21
+     },
+     {
+      "description": "London dry gin 70cl",
+      "matched_item_key": "aw.gin",
+      "quantity": 6,
+      "unit": "bottle",
+      "unit_price": 19.5,
+      "line_total": 117,
+      "vat_rate_percent": 21
+     },
+     {
+      "description": "Premium tonic 20cl (case of 24)",
+      "matched_item_key": "aw.tonic",
+      "quantity": 4,
+      "unit": "case",
+      "unit_price": 14.4,
+      "line_total": 57.6,
+      "vat_rate_percent": 21
+     },
+     {
+      "description": "Vermut rojo 1L",
+      "matched_item_key": "aw.vermut",
+      "quantity": 6,
+      "unit": "bottle",
+      "unit_price": 11.2,
+      "line_total": 67.2,
+      "vat_rate_percent": 21
+     }
+    ],
+    "subtotal": 956.6,
+    "vat_total": 200.89,
+    "total": 1157.49,
+    "observations": [
+     {
+      "text": "Early-payment discount of 2% applies only to payments received by 24 Oct 2026.",
+      "severity": "info"
+     }
+    ],
+    "legibility": "clear"
+   }
+  },
+  "06-cleanpro.png": {
+   "sha256": "efc9574f563ee82cae7996ba460c32ce46c9cf4178ae630d9c63db6bac2fcd05",
+   "promptVersion": "review-v1",
+   "model": "claude-opus-5-5",
+   "recordedAt": "2026-10-16T15:36:59.242Z",
+   "durationMs": 6991,
+   "usage": "7,167 in / 815 out tokens",
+   "extraction": {
+    "document_type": "invoice",
+    "language": "en",
+    "supplier_name": "CleanPro Hospitality Supplies",
+    "supplier_tax_id": "ESB0055501K",
+    "matched_supplier_id": "cleanpro",
+    "payment_email": "payments@cleanprohospitality.example",
+    "invoice_number": "CP-11902",
+    "invoice_date": "2026-10-06",
+    "due_date": "2026-10-21",
+    "payment_terms": "Net 15",
+    "early_payment_discount": null,
+    "delivery_note_refs": [
+     "DN-4471"
+    ],
+    "currency": "EUR",
+    "lines": [
+     {
+      "description": "Heavy-duty degreaser 5L",
+      "matched_item_key": "cp.degreaser",
+      "quantity": 4,
+      "unit": "unit",
+      "unit_price": 12.9,
+      "line_total": 51.6,
+      "vat_rate_percent": 21
+     },
+     {
+      "description": "Dishwasher detergent 20L",
+      "matched_item_key": "cp.dishwash",
+      "quantity": 2,
+      "unit": "unit",
+      "unit_price": 38.5,
+      "line_total": 77,
+      "vat_rate_percent": 21
+     },
+     {
+      "description": "Rinse aid 10L",
+      "matched_item_key": "cp.rinse",
+      "quantity": 1,
+      "unit": "unit",
+      "unit_price": 24.9,
+      "line_total": 24.9,
+      "vat_rate_percent": 21
+     },
+     {
+      "description": "Nitrile gloves, box of 100",
+      "matched_item_key": "cp.gloves",
+      "quantity": 10,
+      "unit": "box",
+      "unit_price": 6.8,
+      "line_total": 68,
+      "vat_rate_percent": 21
+     },
+     {
+      "description": "Blue roll, pack of 6",
+      "matched_item_key": "cp.blueroll",
+      "quantity": 4,
+      "unit": "pack",
+      "unit_price": 11.4,
+      "line_total": 45.6,
+      "vat_rate_percent": 21
+     },
+     {
+      "description": "Food-safe sanitiser 750ml",
+      "matched_item_key": "cp.sanitiser",
+      "quantity": 12,
+      "unit": "unit",
+      "unit_price": 3.2,
+      "line_total": 38.4,
+      "vat_rate_percent": 21
+     }
+    ],
+    "subtotal": 305.5,
+    "vat_total": 64.16,
+    "total": 369.66,
+    "observations": [],
+    "legibility": "clear"
+   }
+  }
+ }
+}

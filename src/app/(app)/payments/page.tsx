@@ -8,7 +8,7 @@ import { PlanApproval } from "@/components/client/PlanApproval";
 import { IconSpark } from "@/components/icons";
 import { Card, Empty, PageHeader, Pill, SectionTitle } from "@/components/ui";
 import { RESTAURANT, supplierById } from "@/data/seed";
-import { claudeConfigured } from "@/lib/claude";
+import { claudeAvailable } from "@/lib/claude";
 import { businessToday, fmtDateTime, fmtDay } from "@/lib/dates";
 import { fmt } from "@/lib/money";
 import { paypalConfigured } from "@/lib/paypal";
@@ -30,7 +30,7 @@ export default async function PaymentsPage() {
   const names: Record<string, string> = {};
   for (const d of state.documents) if (d.review) names[d.id] = supplierById(d.review.supplierId)?.name ?? d.review.extraction.supplier_name;
   const batches = [...state.batches].reverse();
-  const canRun = claudeConfigured() && open.length > 0;
+  const canRun = claudeAvailable() && open.length > 0;
 
   return (
     <div className="space-y-10">
@@ -57,7 +57,7 @@ export default async function PaymentsPage() {
           runningLabel="Planning with Claude…"
           disabled={!canRun}
           disabledReason={
-            !claudeConfigured()
+            !claudeAvailable()
               ? "Add ANTHROPIC_API_KEY to .env.local to run the agent."
               : open.length === 0
                 ? "No reviewed, unpaid invoices to plan. Review the inbox first."

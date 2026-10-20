@@ -1,0 +1,63 @@
+{
+ "about": "Real Claude outputs recorded by the app itself (RECORD_DEMO=1, see src/lib/recordings.ts). DEMO_MODE replays them instead of calling the API.",
+ "entries": {
+  "2a86a9b2653251db6dd388ef": {
+   "docId": "doc-01",
+   "invoiceNumber": "HG-2026/0418",
+   "model": "claude-opus-5-5",
+   "recordedAt": "2026-10-20T18:28:43.363Z",
+   "subject": "Factura HG-2026/0418: error en la línea de Aguacate Hass",
+   "body": "Hola, Antonio:\n\nEspero que estéis todos bien. Al revisar la factura HG-2026/0418 del 9 de octubre de 2026 (total 161,46 €), correspondiente al albarán AL-1092 del 9 de octubre firmado por Marta en cocina, hemos detectado un error en una línea.\n\nAguacate Hass: 6 kg × 4,20 € = 25,20 €, pero en la factura figura 28,20 € (3,00 € de más). Con el 4 % de IVA, supone un exceso de 3,12 €.\n\nPor ello, vamos a abonar ahora 158,34 € y retendremos los 3,12 € de diferencia. Os agradecería que nos enviéis una nota de abono por ese importe para dejar la factura cuadrada.\n\nMuchas gracias de antemano, como siempre, por vuestra atención. Cualquier duda, aquí me tenéis.\n\nUn saludo cordial,\n\nLucía Moreno\nTaberna El Faro\nEl Faro Hostelería S.L.\nlucia@tabernaelfaro.example",
+   "placeholders": {}
+  },
+  "4e3f93cdf27c2a28c2b21f88": {
+   "docId": "doc-02",
+   "invoiceNumber": "FPB-26-1187",
+   "model": "claude-opus-5-5",
+   "recordedAt": "2026-10-20T18:28:53.516Z",
+   "subject": "Factura FPB-26-1187: diferencia de precio en merluza de pincho",
+   "body": "Hola, Rocío:\n\nEspero que estéis todos bien. Te escribo por la factura FPB-26-1187 del 13 de octubre, por un total de 589,60 €, correspondiente al albarán AL-5521 (13 de octubre, firmado por Javi, de cocina).\n\nLa merluza de pincho aparece facturada a 13,80 €/kg, frente a los 11,90 €/kg de las tres últimas facturas (la más reciente, la FPB-26-1141, del 6 de octubre). Supone una subida del 16,0 % que no se nos había comunicado. En 14 kg, son 1,90 € más por kilo: 26,60 € + 10 % de IVA = 29,26 € por encima del precio acordado.\n\nPor ello, abonaremos ahora 560,34 € y retendremos 29,26 €. ¿Podríais enviarnos una nota de abono por esos 29,26 €? En cuanto la recibamos, quedará todo cuadrado.\n\nMuchas gracias de antemano, como siempre.\n\nUn saludo,\n\nLucía Moreno\nTaberna El Faro",
+   "placeholders": {}
+  },
+  "e634afecc9c482f2cebc1335": {
+   "docId": "doc-03",
+   "invoiceNumber": "CHS-7731",
+   "model": "claude-opus-5-5",
+   "recordedAt": "2026-10-20T18:29:01.603Z",
+   "subject": "Factura CHS-7731 – diferencia en presa ibérica y solicitud de abono",
+   "body": "Hola, Javier:\n\nEspero que estéis todos bien. Te escribo por la factura CHS-7731 del 10 de octubre, por un total de 693,55 €.\n\nHemos detectado una diferencia en la presa ibérica: en la factura figuran 12 kg, pero el albarán AL-3307 del 10 de octubre, firmado por Marta en cocina, recoge 10 kg. Son 2 kg × 18,50 € = 37,00 € + 10 % de IVA = 40,70 € facturados por mercancía que no recibimos.\n\nPor ello, vamos a abonar ahora 652,85 € y retenemos los 40,70 € de la diferencia. Te agradecería que nos enviaras una nota de abono por 40,70 € para cuadrar la factura.\n\nSi necesitas una copia del albarán o cualquier otro dato, dímelo y te lo hago llegar.\n\nMuchas gracias, como siempre, por tu ayuda.\n\nUn saludo,\n\nLucía Moreno\nTaberna El Faro (El Faro Hostelería S.L.)\nlucia@tabernaelfaro.example",
+   "placeholders": {}
+  },
+  "b9991266031dd47d2b830f34": {
+   "docId": "doc-04",
+   "invoiceNumber": "GVD-2291",
+   "model": "claude-opus-5-5",
+   "recordedAt": "2026-10-20T18:29:06.581Z",
+   "subject": "Invoice GVD-2291 (€274.71) – already paid on 9 Oct",
+   "body": "Dear Emma,\n\nI hope you are well. I'm writing about invoice GVD-2291, dated 2 October 2026, for €274.71 (delivery note DN-88412, 2 Oct, signed by me).\n\nWe have received a copy of this invoice, but it was already paid by bank transfer on 9 October (reference TRF-20261009-114). Paying this copy would mean paying €274.71 twice, so we are holding payment of the whole invoice for now.\n\nCould you please check this against your records and confirm that this copy can be cancelled? If anything on your side doesn't match, just let me know and I'll be happy to look into it.\n\nThank you for your help, and for your continued service.\n\nKind regards,\n\nLucía Moreno\nTaberna El Faro\nEl Faro Hostelería S.L.\nlucia@tabernaelfaro.example",
+   "placeholders": {}
+  },
+  "7553515f3bca03cfa95c3a1a": {
+   "docId": "doc-01",
+   "invoiceNumber": "HG-2026/0418",
+   "model": "claude-opus-5-5",
+   "recordedAt": "2026-10-20T18:30:36.909Z",
+   "subject": "Factura HG-2026/0418: diferencia en la línea de Aguacate Hass",
+   "body": "Hola, Antonio:\n\nEspero que estéis todos bien. Revisando la factura HG-2026/0418 del 9 de octubre de 2026 (total 161,46 €), que corresponde al albarán AL-1092 firmado por Marta en cocina, hemos visto un error en la línea de Aguacate Hass:\n\n6 kg × 4,20 € = 25,20 €, pero en la factura figuran 28,20 € (+3,00 €). Con el 4 % de IVA, la diferencia es de 3,12 €.\n\nPor este motivo, os hemos pagado 158,34 € por PayPal (lote de pago P3BHMU5TBZKJY) y hemos retenido los 3,12 € de la diferencia.\n\n¿Podríais enviarnos una factura rectificativa (abono) por 3,12 € para dejar la cuenta cuadrada?\n\nMuchas gracias, como siempre, por vuestra atención y por el buen servicio.\n\nUn saludo,\n\nLucía Moreno\nTaberna El Faro\nEl Faro Hostelería S.L.\nlucia@tabernaelfaro.example",
+   "placeholders": {
+    "{PAYOUT_BATCH}": "P3BHMU5TBZKJY"
+   }
+  },
+  "8ffd043b5c3197e26ce89995": {
+   "docId": "doc-02",
+   "invoiceNumber": "FPB-26-1187",
+   "model": "claude-opus-5-5",
+   "recordedAt": "2026-10-20T18:30:49.779Z",
+   "subject": "Factura FPB-26-1187: diferencia de precio en merluza de pincho",
+   "body": "Hola, Rocío:\n\nEspero que estéis todos bien. Al revisar la factura FPB-26-1187 del 13 de octubre (total 589,60 €, albarán AL-5521, firmado por Javi en cocina), hemos visto que la merluza de pincho aparece a 13,80 €/kg. En las tres últimas facturas la hemos pagado a 11,90 €/kg (la más reciente, FPB-26-1141, del 6 de octubre). Supone un aumento del 16,0 % que no se nos había comunicado.\n\nSobre 14 kg, son 1,90 €/kg más, es decir, 26,60 € más el 10 % de IVA: 29,26 € por encima del precio acordado.\n\nPor ello, ya hemos abonado 560,34 € por PayPal (lote P3BHMU5TBZKJY) y hemos retenido esos 29,26 €. ¿Podríais enviarnos una factura rectificativa por 29,26 € para dejar la factura cuadrada?\n\nMuchas gracias de antemano, como siempre.\n\nUn saludo,\n\nLucía Moreno\nTaberna El Faro (El Faro Hostelería S.L.)\nlucia@tabernaelfaro.example",
+   "placeholders": {
+    "{PAYOUT_BATCH}": "P3BHMU5TBZKJY"
+   }
+  }
+ }
+}

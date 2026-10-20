@@ -84,7 +84,9 @@ export function AgentRunner({
       {error && <ErrorNote>{error}</ErrorNote>}
       {(running || events.length > 0) && (
         <div className="rounded-xl border border-line bg-paper/60 p-4">
-          <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Agent log · live</p>
+          <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+            Agent log · {events.some((e) => e.type === "info" && e.tone === "replay") ? "demo replay" : events.some((e) => e.type === "info") ? "demo fallback" : "live"}
+          </p>
           <AgentTimeline events={events} running={running} />
         </div>
       )}

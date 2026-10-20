@@ -344,6 +344,8 @@ export interface ApiCallInfo {
   requestId?: string;
   debugId?: string;
   error?: string;
+  /** Set when the call went through the official PayPal Agent Toolkit (MCP) instead of our REST client. */
+  via?: "toolkit";
 }
 
 export interface AuditEntry {
@@ -354,6 +356,33 @@ export interface AuditEntry {
   api?: ApiCallInfo;
   ref?: { docId?: string; planId?: string; batchId?: string; orderId?: string; proposalId?: string };
   amountCents?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Ledger reconciliation (read-only comparison with PayPal)
+
+export interface ReconRow {
+  id: string;
+  kind: "payout" | "order";
+  counterparty: string;
+  reference: string;
+  /** PayPal transaction id (capture id or payout item transaction id) when known. */
+  transactionId: string | null;
+  ledgerCents: number;
+  paypalCents: number | null;
+  ledgerStatus: string;
+  paypalStatus: string;
+  result: "match" | "pending" | "mismatch";
+  note: string;
+  /** Found in the account's transaction list (toolkit list_transactions); null when not checked. */
+  listed: boolean | null;
+}
+
+export interface Reconciliation {
+  at: string;
+  rows: ReconRow[];
+  transactionSearch: { ok: boolean; count: number; start: string; end: string; error?: string };
+  totals: { match: number; pending: number; mismatch: number };
 }
 
 export interface Settings {
@@ -372,6 +401,7 @@ export interface AppState {
   orders: StoreOrder[];
   inventory: InventoryItem[];
   cardOnFile?: { vaultId: string; brand: string; last4: string; createdAt: string };
+  reconciliation?: Reconciliation;
   audit: AuditEntry[];
 }
 
@@ -380,6 +410,8 @@ export interface AppState {
 
 export type AgentEvent =
   | { type: "note"; text: string }
+  /** Not from Claude: how this run is produced (demo replay or the deterministic fallback). */
+  | { type: "info"; text: string; tone: "replay" | "fallback" }
   | { type: "tool_start"; id: string; tool: string; label: string }
   | { type: "tool_end"; id: string; tool: string; summary: string; error?: boolean }
   | { type: "result"; kind: "plan" | "proposal"; id: string }

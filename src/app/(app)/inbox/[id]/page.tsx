@@ -7,7 +7,7 @@ import { IconArrowLeft, IconCheck, IconTruck } from "@/components/icons";
 import { ACTION_TONE, buttonClass, Card, cx, docStatus, ErrorNote, Money, Mono, Pill, SEVERITY_LABEL, SEVERITY_TONE, SeverityIcon, Stamp } from "@/components/ui";
 import { CATALOG, DELIVERY_NOTES, supplierById } from "@/data/seed";
 import { ACTION_LABEL, effective, isSettled } from "@/lib/ap";
-import { claudeConfigured } from "@/lib/claude";
+import { claudeAvailable } from "@/lib/claude";
 import { businessToday, fmtDay, fmtDateTime, relativeDue } from "@/lib/dates";
 import { fmt, fmtQty, toCents } from "@/lib/money";
 import { readState } from "@/lib/state";
@@ -141,8 +141,8 @@ export default async function ReviewPage(props: PageProps<"/inbox/[id]">) {
                 checks each line against the signed delivery note and your price history, and recommends what to pay.
               </p>
               <div className="mt-5">
-                <ReviewButton docId={doc.id} disabled={!claudeConfigured() || doc.reviewStatus === "reviewing"} label={doc.reviewStatus === "reviewing" ? "Review in progress…" : "Review with Claude"} />
-                {!claudeConfigured() && <p className="mt-2 text-xs text-terracotta">Add ANTHROPIC_API_KEY to .env.local to enable reviews.</p>}
+                <ReviewButton docId={doc.id} disabled={!claudeAvailable() || doc.reviewStatus === "reviewing"} label={doc.reviewStatus === "reviewing" ? "Review in progress…" : "Review with Claude"} />
+                {!claudeAvailable() && <p className="mt-2 text-xs text-terracotta">Add ANTHROPIC_API_KEY to .env.local to enable reviews.</p>}
               </div>
             </Card>
           )}

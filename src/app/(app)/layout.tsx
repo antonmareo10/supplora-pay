@@ -6,10 +6,11 @@ import { NavLinks, type NavCounts } from "@/components/client/NavLinks";
 import { ResetDemoButton } from "@/components/client/small";
 import { RESTAURANT } from "@/data/seed";
 import { lowStock } from "@/lib/ap";
-import { claudeConfigured } from "@/lib/claude";
+import { claudeMode } from "@/lib/claude";
 import { businessToday, fmtDayLong } from "@/lib/dates";
 import { needsDispute } from "@/lib/disputes";
 import { paypalConfigured } from "@/lib/paypal";
+import { demoMode } from "@/lib/session";
 import { readState } from "@/lib/state";
 
 function StatusDot({ ok, label }: { ok: boolean; label: string }) {
@@ -32,8 +33,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     reorder: lowStock(state).length,
   };
   const today = businessToday();
-  const claude = claudeConfigured();
+  const claude = claudeMode();
   const paypal = paypalConfigured();
+  const demo = demoMode();
 
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[264px_minmax(0,1fr)]">
@@ -60,7 +62,10 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
         <div className="mt-auto space-y-3 px-2 text-xs text-ink-2">
           <ul className="space-y-1.5">
-            <StatusDot ok={claude} label={claude ? "Claude · claude-opus-5-5" : "Claude not configured"} />
+            <StatusDot
+              ok={claude !== "off"}
+              label={claude === "live" ? "Claude · claude-opus-5-5" : claude === "replay" ? "Claude · recorded runs (demo)" : "Claude not configured"}
+            />
             <StatusDot ok={paypal} label={paypal ? "PayPal sandbox" : "PayPal not configured"} />
           </ul>
           <p className="text-muted">
@@ -82,6 +87,16 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           <NavLinks variant="top" counts={counts} />
         </header>
         <main id="main" className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-8 lg:py-10">
+          {demo && (
+            <aside aria-label="About this demo" className="no-print mb-6 flex flex-col gap-1 rounded-xl border border-ledger/20 bg-ledger-soft px-4 py-2.5 text-[13px] leading-snug text-ledger sm:flex-row sm:items-center sm:gap-3">
+              <span className="shrink-0 font-semibold uppercase tracking-wider">Public demo</span>
+              <span className="text-ink-2">
+                No keys needed: Claude&rsquo;s invoice readings and agent runs are <strong className="font-semibold text-ink">replays of recorded real runs</strong>; every
+                rule, approval and <strong className="font-semibold text-ink">PayPal sandbox call runs live</strong>. Your session is private to this browser; use Reset demo to
+                start over.
+              </span>
+            </aside>
+          )}
           {children}
         </main>
         <footer className="no-print mx-auto max-w-6xl px-4 pb-10 text-xs text-muted sm:px-8">

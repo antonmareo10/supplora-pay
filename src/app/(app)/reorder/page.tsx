@@ -9,7 +9,7 @@ import { OrderCard } from "@/components/OrderCard";
 import { Card, cx, PageHeader, Pill, SectionTitle } from "@/components/ui";
 import { storeSuppliers, supplierById } from "@/data/seed";
 import { lowStock } from "@/lib/ap";
-import { claudeConfigured } from "@/lib/claude";
+import { claudeAvailable } from "@/lib/claude";
 import { fmtDateTime } from "@/lib/dates";
 import { fmt } from "@/lib/money";
 import { paypalConfigured } from "@/lib/paypal";
@@ -25,7 +25,7 @@ export default async function ReorderPage() {
   const activeOrders = active ? state.orders.filter((o) => active.orderIds.includes(o.id)) : [];
   const history = [...state.orders].reverse().filter((o) => !active?.orderIds.includes(o.id) && o.status === "COMPLETED");
   const card = state.cardOnFile ? `${state.cardOnFile.brand} •••• ${state.cardOnFile.last4}` : null;
-  const ready = claudeConfigured() && paypalConfigured();
+  const ready = claudeAvailable() && paypalConfigured();
 
   return (
     <div className="space-y-10">

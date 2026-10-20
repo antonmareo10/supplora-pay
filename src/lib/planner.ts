@@ -7,9 +7,11 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { PAID_INVOICES, RESTAURANT, supplierById } from "@/data/seed";
 import { effective, isSettled } from "./ap";
-import { anthropic, claudeErrorMessage, MODEL } from "./claude";
+import { callTool, replayRun, runLive } from "./agent-run";
+import { anthropic, claudeErrorMessage, claudeMode, MODEL } from "./claude";
 import { addDays, businessToday, daysBetween, fmtDay } from "./dates";
 import { fmt, pctOf, toDecimalString } from "./money";
+import { fingerprint, recordedRun, recordMode } from "./recordings";
 import { auditEntry, newId, readState, updateState } from "./state";
 import type { AgentEvent, AppState, DeferredPayment, DocumentRecord, PaymentPlan, PlannedPayment } from "./types";
 
@@ -72,8 +74,20 @@ Rules:
 - Every open invoice must be either paid or deferred, each with a one-sentence reason that cites the exact euros and dates returned by the tools.
 - Write for a busy owner: plain, warm, specific. Before each group of tool calls, write one short sentence (max 15 words) saying what you are checking.`;
 
+/** What a recorded planner run depends on: replay only when this matches exactly. */
+export function plannerFingerprint(state: AppState, today: string): string {
+  const { open, held, unreviewed } = openInvoices(state, today);
+  return fingerprint({
+    today,
+    cap: state.settings.cashCapCents,
+    open: open.map((o) => [o.doc.id, o.payableCents, o.withheldCents, o.dueDate, o.discount?.amountCents ?? 0, o.discount?.deadline ?? null]),
+    held: held.map((h) => h.id),
+    unreviewed,
+  });
+}
+
 export async function runPaymentPlanner(emit: Emit, signal?: AbortSignal): Promise<string | null> {
-  const client = anthropic();
+  const mode = claudeMode();
   const today = businessToday();
   const startState = await readState();
   const capCents = startState.settings.cashCapCents;
@@ -312,41 +326,51 @@ export async function runPaymentPlanner(emit: Emit, signal?: AbortSignal): Promi
     },
   });
 
-  const runner = client.beta.messages.toolRunner(
-    {
-      model: MODEL,
-      max_tokens: 16000,
-      max_iterations: 10,
-      system: SYSTEM,
-      output_config: { effort: "medium" },
-      thinking: { type: "adaptive", display: "updates" },
-      betas: ["server-side-fallback-2026-07-01", "thinking-display-updates-2026-08-18"],
-      fallbacks: "default",
-      tools: [getOpenInvoices, getCashPosition, getSupplier, proposePlan, requestApproval],
-      messages: [
-        {
-          role: "user",
-          content: `Today is ${fmtDay(today)} (${today}). Prepare this week's supplier payment run for ${RESTAURANT.ownerFirstName}.`,
-        },
-      ],
-    },
-    { signal },
-  );
+  const tools = [getOpenInvoices, getCashPosition, getSupplier, proposePlan, requestApproval];
+  const fp = plannerFingerprint(startState, today);
 
-  try {
-    for await (const message of runner) {
-      for (const block of message.content) {
-        if (block.type === "text" && block.text.trim()) out({ type: "note", text: block.text.trim() });
-        if (block.type === "thinking" && block.thinking.trim()) out({ type: "note", text: block.thinking.trim() });
-      }
-      if (message.stop_reason === "refusal") {
-        out({ type: "error", message: "The model declined this request." });
-        return null;
-      }
+  if (mode === "replay") {
+    const rec = recordedRun("planner");
+    if (rec && rec.fingerprint === fp) {
+      await replayRun(rec, tools, out, signal);
+    } else {
+      out({
+        type: "info",
+        tone: "fallback",
+        text: "Your inputs differ from the recorded Claude run (another cash cap, an override, or invoices already paid), so the demo's deterministic planner prepares this plan instead: the same priority rules written as code, validated by the same tools. Run the app with your own API key to see Claude plan any scenario.",
+      });
+      await runFallbackPlanner(tools, today, capCents);
     }
-  } catch (err) {
-    if (!savedPlanId) {
-      out({ type: "error", message: claudeErrorMessage(err) });
+  } else {
+    const result = await runLive(
+      anthropic(),
+      {
+        model: MODEL,
+        max_tokens: 16000,
+        max_iterations: 10,
+        system: SYSTEM,
+        output_config: { effort: "medium" },
+        thinking: { type: "adaptive", display: "updates" },
+        betas: ["server-side-fallback-2026-07-01", "thinking-display-updates-2026-08-18"],
+        fallbacks: "default",
+        tools,
+        messages: [
+          {
+            role: "user",
+            content: `Today is ${fmtDay(today)} (${today}). Prepare this week's supplier payment run for ${RESTAURANT.ownerFirstName}.`,
+          },
+        ],
+      },
+      out,
+      signal,
+      recordMode() ? { kind: "planner", fingerprint: fp, meta: { cashCapCents: capCents, today } } : null,
+    );
+    if (result.refused) {
+      out({ type: "error", message: "The model declined this request." });
+      return null;
+    }
+    if (result.error && !savedPlanId) {
+      out({ type: "error", message: claudeErrorMessage(result.error) });
       return null;
     }
   }
@@ -366,6 +390,63 @@ export async function runPaymentPlanner(emit: Emit, signal?: AbortSignal): Promi
     if (plan) plan.agentLog = log;
   });
   return planId;
+}
+
+/**
+ * Demo-only fallback when the visitor's inputs differ from the recorded run: the planner's
+ * priority rules as code (due before the next run first, then open early-payment discounts,
+ * then the rest waits), driven through the agent's own tools so validation, the audit trail
+ * and the approval flow are identical. Never used when Claude is available.
+ */
+async function runFallbackPlanner(tools: Parameters<typeof callTool>[0], today: string, capCents: number): Promise<void> {
+  const call = (tool: string, input: Record<string, unknown> = {}) => callTool(tools, { id: `fallback_${tool}_${crypto.randomUUID().slice(0, 8)}`, tool, input });
+  await Promise.all([call("get_open_invoices"), call("get_cash_position")]);
+  const { open } = openInvoices(await readState(), today);
+  const nextRun = addDays(today, 7);
+  const byDue = [...open].sort((a, b) => (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999"));
+  const due = byDue.filter((o) => o.dueDate && o.dueDate <= nextRun);
+  const discounted = byDue.filter((o) => !due.includes(o) && o.discount).sort((a, b) => b.discount!.amountCents - a.discount!.amountCents);
+  const rest = byDue.filter((o) => !due.includes(o) && !discounted.includes(o));
+  let total = 0;
+  const payments: { invoice_id: string; take_early_payment_discount: boolean; reason: string }[] = [];
+  const deferred: { invoice_id: string; reason: string }[] = [];
+  const label = (o: OpenInvoice) => `${o.supplierName} ${o.invoiceNumber}`;
+  const withheld = (o: OpenInvoice) => (o.withheldCents ? ` (${fmt(o.withheldCents)} withheld until a credit note arrives)` : "");
+  for (const o of due) {
+    const amount = o.payableCents - (o.discount?.amountCents ?? 0);
+    if (total + amount > capCents) {
+      deferred.push({ invoice_id: o.doc.id, reason: `${label(o)} is due ${fmtDay(o.dueDate)} but ${fmt(amount)} does not fit the ${fmt(capCents)} cap: raise the cap or pay it in the next run.` });
+      continue;
+    }
+    total += amount;
+    payments.push({
+      invoice_id: o.doc.id,
+      take_early_payment_discount: !!o.discount,
+      reason: `${label(o)} is due ${fmtDay(o.dueDate)}, before the next run on ${fmtDay(nextRun)}: pay ${fmt(amount)}${withheld(o)}.`,
+    });
+  }
+  for (const o of discounted) {
+    const amount = o.payableCents - o.discount!.amountCents;
+    if (total + amount > capCents) {
+      deferred.push({ invoice_id: o.doc.id, reason: `Paying ${label(o)} early would save ${fmt(o.discount!.amountCents)}, but ${fmt(amount)} does not fit the ${fmt(capCents)} cap.` });
+      continue;
+    }
+    total += amount;
+    payments.push({
+      invoice_id: o.doc.id,
+      take_early_payment_discount: true,
+      reason: `Paying ${label(o)} by ${fmtDay(o.discount!.deadline)} takes the ${o.discount!.percent}% early-payment discount: ${fmt(amount)} instead of ${fmt(o.payableCents)}, saving ${fmt(o.discount!.amountCents)}.`,
+    });
+  }
+  for (const o of rest) {
+    deferred.push({ invoice_id: o.doc.id, reason: `${label(o)} (${fmt(o.payableCents)}${withheld(o)}) is not due until ${fmtDay(o.dueDate)}, after the next run on ${fmtDay(nextRun)}, so it waits to keep cash in hand.` });
+  }
+  if (!payments.length && !deferred.length) return;
+  const discounts = payments.filter((p) => p.take_early_payment_discount).length;
+  const summary = `Pay ${payments.length} invoice${payments.length === 1 ? "" : "s"} for ${fmt(total)} of the ${fmt(capCents)} cap${discounts ? ", taking the early-payment discount where it is open" : ""}; ${deferred.length} deferred.`;
+  const proposed = await call("propose_payment_plan", { payments, deferred, summary });
+  if (proposed.startsWith("Error") || proposed.includes('"ok":false')) return;
+  await call("request_approval", { message_to_owner: `${summary} Nothing is paid until you approve.` });
 }
 
 async function savePlan(

@@ -12,9 +12,10 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { CATALOG, DELIVERY_NOTES, PAID_INVOICES, PRICE_HISTORY, RESTAURANT, SAMPLE_FILES, SUPPLIERS } from "@/data/seed";
 import { runChecks, type OtherDocument } from "./checks";
-import { anthropic, claudeErrorMessage, MODEL, usageLabel } from "./claude";
+import { anthropic, claudeErrorMessage, claudeMode, MODEL, usageLabel } from "./claude";
 import { businessToday } from "./dates";
 import { fmt } from "./money";
+import { recordedReview, recordMode, saveRecordedReview, sha256 } from "./recordings";
 import { CACHE_DIR, UPLOAD_DIR, auditEntry, readState, updateState } from "./state";
 import type { AppState, DocumentRecord, Extraction, PaidInvoice, ReviewRecord } from "./types";
 import { isSettled } from "./ap";
@@ -114,8 +115,37 @@ export async function documentBytes(doc: DocumentRecord): Promise<Buffer> {
   return fs.readFile(/*turbopackIgnore: true*/ path.join(/*turbopackIgnore: true*/ UPLOAD_DIR, `${doc.id}.${ext}`));
 }
 
-async function extract(doc: DocumentRecord): Promise<{ result: CachedExtraction; cached: boolean; messageId?: string }> {
+type ExtractResult = { result: CachedExtraction; cached: boolean; replayed?: boolean; messageId?: string };
+
+/** Public demo: the recorded real reading of a bundled sample (never a model call). */
+async function replayExtraction(doc: DocumentRecord, bytes: Buffer): Promise<ExtractResult> {
+  const rec = doc.origin === "sample" ? recordedReview(doc.fileName) : null;
+  if (!rec) throw new ReviewError("The public demo can only replay the bundled sample invoices. Run the app with your own Anthropic key to read other documents.", 409);
+  if (rec.sha256 !== sha256(bytes) || rec.promptVersion !== PROMPT_VERSION) throw new ReviewError("This sample changed since its reading was recorded; re-record it.", 409);
+  // Paced so the inbox shows the documents being worked through, as in a live run.
+  await new Promise((r) => setTimeout(r, 900 + Math.floor(Math.random() * 900)));
+  return { result: { extraction: rec.extraction, model: rec.model, durationMs: rec.durationMs, createdAt: rec.recordedAt, usage: rec.usage }, cached: true, replayed: true };
+}
+
+async function extract(doc: DocumentRecord): Promise<ExtractResult> {
   const bytes = await documentBytes(doc);
+  if (claudeMode() === "replay") return replayExtraction(doc, bytes);
+  const out = await extractLive(doc, bytes);
+  if (recordMode() && doc.origin === "sample") {
+    await saveRecordedReview(doc.fileName, {
+      sha256: sha256(bytes),
+      promptVersion: PROMPT_VERSION,
+      model: out.result.model,
+      recordedAt: out.result.createdAt,
+      durationMs: out.result.durationMs,
+      usage: out.result.usage,
+      extraction: out.result.extraction,
+    });
+  }
+  return out;
+}
+
+async function extractLive(doc: DocumentRecord, bytes: Buffer): Promise<ExtractResult> {
   const key = createHash("sha256").update(PROMPT_VERSION).update(MODEL).update(doc.mimeType).update(bytes).digest("hex").slice(0, 40);
   const hit = await readCache(key);
   if (hit) return { result: hit, cached: true };
@@ -218,7 +248,7 @@ export async function reviewDocument(docId: string): Promise<DocumentRecord> {
   try {
     ex = await extract(claimed);
   } catch (err) {
-    const message = claudeErrorMessage(err);
+    const message = err instanceof ReviewError ? err.message : claudeErrorMessage(err);
     await updateState((s) => {
       const doc = s.documents.find((d) => d.id === docId);
       if (doc) {
@@ -229,12 +259,12 @@ export async function reviewDocument(docId: string): Promise<DocumentRecord> {
         auditEntry({
           actor: "claude",
           message: `Could not read ${claimed.fileName}: ${message}`,
-          api: { method: "POST", endpoint: "/v1/messages", status: (err as { status?: number }).status ?? 0, ok: false, durationMs: 0, error: message },
+          api: err instanceof ReviewError ? undefined : { method: "POST", endpoint: "/v1/messages", status: (err as { status?: number }).status ?? 0, ok: false, durationMs: 0, error: message },
           ref: { docId },
         }),
       );
     });
-    throw new ReviewError(message, 502);
+    throw err instanceof ReviewError ? err : new ReviewError(message, 502);
   }
 
   return updateState((s) => {
@@ -257,7 +287,7 @@ export async function reviewDocument(docId: string): Promise<DocumentRecord> {
     s.audit.push(
       auditEntry({
         actor: "claude",
-        message: `${ex.cached ? "Reused cached reading of" : "Read"} ${extraction.invoice_number ?? doc.fileName} (${supplier?.name ?? extraction.supplier_name}): ${extraction.lines.length} lines, total ${fmt(outcome.invoiceCents)}${ex.result.usage && !ex.cached ? ` · ${ex.result.usage}` : ""}`,
+        message: `${ex.replayed ? `Demo replay of Claude's recorded reading (${ex.result.model}, ${ex.result.createdAt.slice(0, 10)}) of` : ex.cached ? "Reused cached reading of" : "Read"} ${extraction.invoice_number ?? doc.fileName} (${supplier?.name ?? extraction.supplier_name}): ${extraction.lines.length} lines, total ${fmt(outcome.invoiceCents)}${ex.result.usage && !ex.cached ? ` · ${ex.result.usage}` : ""}`,
         api: ex.cached
           ? undefined
           : { method: "POST", endpoint: "/v1/messages", status: 200, ok: true, durationMs: ex.result.durationMs, resourceId: ex.messageId },

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { handleWrite, HttpError } from "@/lib/http";
+import { demoMode } from "@/lib/session";
 import { auditEntry, newId, UPLOAD_DIR, updateState } from "@/lib/state";
 import type { DocumentRecord } from "@/lib/types";
 
@@ -20,6 +21,7 @@ function sniff(b: Uint8Array): { mime: string; ext: string } | null {
 
 export async function POST(request: Request) {
   return handleWrite(request, async () => {
+    if (demoMode()) throw new HttpError("Uploads are off in the public demo: nothing here calls Claude. Run the app with your own Anthropic key to read your own invoices.", 403);
     const length = Number(request.headers.get("content-length") ?? 0);
     if (length > MAX_BYTES + 64_000) throw new HttpError("File too large (max 10 MB).", 413);
     let form: FormData;

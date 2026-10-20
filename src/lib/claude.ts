@@ -1,6 +1,7 @@
 // Shared Anthropic client and error mapping (server only).
 
 import Anthropic from "@anthropic-ai/sdk";
+import { demoMode } from "./session";
 
 export const MODEL = process.env.SUPPLORA_MODEL || "claude-opus-5-5";
 
@@ -10,7 +11,22 @@ export function claudeConfigured(): boolean {
   return !!process.env.ANTHROPIC_API_KEY;
 }
 
+/**
+ * How Claude's work is produced: "live" calls the API with ANTHROPIC_API_KEY; "replay" (DEMO_MODE)
+ * replays recordings of real runs and never calls the API, even if a key is set; "off" otherwise.
+ */
+export function claudeMode(): "live" | "replay" | "off" {
+  if (demoMode()) return "replay";
+  return claudeConfigured() ? "live" : "off";
+}
+
+/** True when reviews and agent runs can be started (live, or replayed in the public demo). */
+export function claudeAvailable(): boolean {
+  return claudeMode() !== "off";
+}
+
 export function anthropic(): Anthropic {
+  if (demoMode()) throw new Error("Claude is not called in the public demo (DEMO_MODE): runs are replayed from recordings.");
   if (!claudeConfigured()) throw new Error("Claude is not configured: set ANTHROPIC_API_KEY in .env.local.");
   return (g.__supploraAnthropic ??= new Anthropic({ maxRetries: 2, timeout: 180_000 }));
 }

@@ -1,17 +1,23 @@
 // Agentic reorder. The purchasing agent reads stock levels and the suppliers'
 // online store catalogs, then creates PayPal checkouts (Orders v2, status CREATED)
-// within the owner's spending limit. It cannot pay: capture only happens when the
-// owner approves, using the restaurant's card on file (PayPal Vault token).
+// within the owner's spending limit, and verifies each one on PayPal with get_order from
+// the official PayPal Agent Toolkit. It cannot pay: the toolkit's pay_order is never enabled,
+// and capture only happens when the owner approves, using the restaurant's card on file
+// (PayPal Vault token), after the order is re-read through the toolkit.
 
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { RESTAURANT, STORE_PRODUCTS, supplierById } from "@/data/seed";
+import { callTool, replayRun, runLive } from "./agent-run";
 import { lowStock } from "./ap";
-import { anthropic, claudeErrorMessage, MODEL } from "./claude";
+import { anthropic, claudeErrorMessage, claudeMode, MODEL } from "./claude";
 import { fmt, pctOf, toDecimalString } from "./money";
 import { captureOrder, cartTotals, confirmWithCardOnFile, createOrder, ensureCardOnFile, firstCapture, PayPalError } from "./paypal";
+import { openToolkit, orderFacts, withToolkit, type ToolkitConnection, type ToolkitResult } from "./paypal-toolkit";
+import { RESTOCK_AGENT_TOOLKIT_TOOLS } from "./paypal-toolkit-policy";
+import { fingerprint, recordedRun, recordMode, type RecordedCall } from "./recordings";
 import { auditEntry, newId, readState, updateState } from "./state";
-import type { AgentEvent, CartLine, StoreOrder } from "./types";
+import type { AgentEvent, AppState, CartLine, StoreOrder } from "./types";
 
 type Emit = (e: AgentEvent) => void;
 const eur = (cents: number) => Number(toDecimalString(cents));
@@ -78,16 +84,42 @@ How to work:
 2. Call browse_store for each supplier with low-stock items (in parallel).
 3. Decide quantities. Bring items back to par. When the limit does not cover everything, prioritise kitchen hygiene and food-safety essentials and items at zero stock, then bar items. Buying less than par is fine. Never exceed the limit.
 4. Call create_checkout once per supplier. If it returns an error, fix the cart and call it again.
-5. Call submit_for_approval once, with a short summary for the owner.
+5. Verify each checkout on PayPal with get_order (PayPal Agent Toolkit): it must be CREATED, in EUR, for the total create_checkout returned. submit_for_approval refuses unverified checkouts.
+6. Call submit_for_approval once, with a short summary for the owner. Any euro figure in it must come from the tool results (do not estimate totals you did not get from a tool).
 
 Before each group of tool calls, write one short sentence (max 15 words) saying what you are doing.`;
 
+/** What a recorded restock run depends on: replay only when this matches exactly. */
+export function restockFingerprint(state: AppState): string {
+  return fingerprint({
+    limit: state.settings.restockLimitCents,
+    low: lowStock(state).map((i) => [i.key, i.onHand, i.par, i.sku]),
+    products: STORE_PRODUCTS.map((p) => [p.sku, p.unitPriceCents, p.vatRate, p.inStock]),
+  });
+}
+
+/** Does a get_order result (PayPal Agent Toolkit) match the checkout the agent created? */
+export function checkOrderMatches(order: StoreOrder, r: ToolkitResult): { ok: boolean; reason: string } {
+  if (!r.ok) return { ok: false, reason: `PayPal Agent Toolkit get_order failed: ${r.error}` };
+  const f = orderFacts(r.data);
+  if (f.id !== order.id) return { ok: false, reason: `PayPal returned order ${f.id}, expected ${order.id}` };
+  if (f.currency !== "EUR" || f.amountCents !== order.totalCents) {
+    return { ok: false, reason: `PayPal shows ${f.currency} ${f.amountCents != null ? (f.amountCents / 100).toFixed(2) : "?"} for ${order.id}, but the checkout is ${fmt(order.totalCents)}` };
+  }
+  if (!["CREATED", "APPROVED"].includes(f.status)) return { ok: false, reason: `Order ${order.id} is ${f.status} on PayPal, expected CREATED` };
+  return { ok: true, reason: `${order.id} is ${f.status} on PayPal for ${fmt(order.totalCents)}` };
+}
+
 export async function runRestockAgent(emit: Emit, signal?: AbortSignal): Promise<string | null> {
-  const client = anthropic();
+  const mode = claudeMode();
   const state = await readState();
   const limitCents = state.settings.restockLimitCents;
   const proposalId = newId("rst");
   const checkouts = new Map<string, StoreOrder>();
+  /** Checkouts whose PayPal order was read back through the toolkit and matched. */
+  const verified = new Set<string>();
+  /** Recording only: which supplier each PayPal order id belonged to (replays remap ids). */
+  const orderSuppliers: Record<string, string> = {};
   let submitted = false;
   const log: AgentEvent[] = [];
   const out: Emit = (e) => {
@@ -209,6 +241,7 @@ export async function runRestockAgent(emit: Emit, signal?: AbortSignal): Promise
         status: order.status,
       };
       checkouts.set(supplier_id, record);
+      orderSuppliers[order.id] = supplier_id;
       return {
         summary: `PayPal order ${order.id} · ${order.status} · ${fmt(totals.totalCents)}`,
         result: {
@@ -229,6 +262,14 @@ export async function runRestockAgent(emit: Emit, signal?: AbortSignal): Promise
     label: () => "Sending the orders to the owner for approval",
     run: async ({ summary }) => {
       if (!checkouts.size) return { summary: "No checkouts yet", result: { error: "Create at least one checkout first." }, error: true };
+      const unverified = [...checkouts.values()].filter((o) => !verified.has(o.id)).map((o) => o.id);
+      if (unverified.length) {
+        return {
+          summary: `${unverified.length} checkout${unverified.length === 1 ? "" : "s"} not verified yet`,
+          result: { error: `Verify these PayPal orders with get_order first: ${unverified.join(", ")}` },
+          error: true,
+        };
+      }
       await saveProposal(proposalId, [...checkouts.values()], limitCents, summary.trim(), log);
       submitted = true;
       out({ type: "result", kind: "proposal", id: proposalId });
@@ -236,43 +277,101 @@ export async function runRestockAgent(emit: Emit, signal?: AbortSignal): Promise
     },
   });
 
-  const runner = client.beta.messages.toolRunner(
-    {
-      model: MODEL,
-      max_tokens: 16000,
-      max_iterations: 10,
-      system: SYSTEM,
-      output_config: { effort: "medium" },
-      thinking: { type: "adaptive", display: "updates" },
-      betas: ["server-side-fallback-2026-07-01", "thinking-display-updates-2026-08-18"],
-      fallbacks: "default",
-      tools: [checkInventory, browseStore, createCheckout, submit],
-      messages: [{ role: "user", content: `Restock what's running low. Spending limit for this run: ${fmt(limitCents)} including VAT.` }],
+  // The official PayPal Agent Toolkit, as an in-process MCP server: Claude gets get_order only.
+  let toolkit: ToolkitConnection;
+  try {
+    toolkit = await openToolkit();
+  } catch (err) {
+    out({ type: "error", message: `Could not start the PayPal Agent Toolkit: ${err instanceof Error ? err.message : String(err)}` });
+    return null;
+  }
+  const verify = (orderId: string, r: ToolkitResult): string => {
+    const order = [...checkouts.values()].find((o) => o.id === orderId);
+    if (!order) return `No checkout from this run has id ${orderId}`;
+    const check = checkOrderMatches(order, r);
+    if (check.ok) verified.add(order.id);
+    return check.reason;
+  };
+  const toolkitTools = toolkit.agentTools(RESTOCK_AGENT_TOOLKIT_TOOLS, {
+    before: (name, input, id) => {
+      out({ type: "tool_start", id, tool: `${name} · PayPal Agent Toolkit`, label: `Verifying PayPal order ${String(input.id ?? "")} on PayPal` });
+      return input;
     },
-    { signal },
-  );
+    after: (name, input, r, id) => {
+      const verdict = verify(String(input.id ?? ""), r);
+      out({ type: "tool_end", id, tool: `${name} · PayPal Agent Toolkit`, summary: r.ok ? `${orderFacts(r.data).status} · ${verdict}` : verdict, error: !r.ok || !verified.has(String(input.id)) });
+      return `${r.text}\n\nSupplora check: ${verdict}`;
+    },
+  });
+  const tools = [checkInventory, browseStore, createCheckout, ...toolkitTools, submit];
+  const fp = restockFingerprint(state);
 
   try {
-    for await (const message of runner) {
-      for (const block of message.content) {
-        if (block.type === "text" && block.text.trim()) out({ type: "note", text: block.text.trim() });
-        if (block.type === "thinking" && block.thinking.trim()) out({ type: "note", text: block.thinking.trim() });
+    if (mode === "replay") {
+      const rec = recordedRun("restock");
+      if (rec && rec.fingerprint === fp) {
+        // Recorded PayPal order ids are replaced by the ids of the orders created in this replay.
+        const recordedSuppliers = (rec.meta.orderSuppliers ?? {}) as Record<string, string>;
+        const remap = (c: RecordedCall): RecordedCall => {
+          if (c.tool !== "get_order") return c;
+          const supplier = recordedSuppliers[String(c.input.id)];
+          const current = supplier ? checkouts.get(supplier)?.id : undefined;
+          return current ? { ...c, input: { ...c.input, id: current } } : c;
+        };
+        await replayRun(rec, tools, out, signal, remap);
+      } else {
+        out({
+          type: "info",
+          tone: "fallback",
+          text: "Your stock or spending limit differs from the recorded Claude run, so the demo's deterministic buyer fills the carts instead (zero-stock items first, then hygiene, then bar; same tools, same limit checks, same PayPal calls). Run the app with your own API key to see Claude shop any scenario.",
+        });
+        await runFallbackRestock(tools, state, limitCents);
       }
-      if (message.stop_reason === "refusal") {
+    } else {
+      const result = await runLive(
+        anthropic(),
+        {
+          model: MODEL,
+          max_tokens: 16000,
+          max_iterations: 12,
+          system: SYSTEM,
+          output_config: { effort: "medium" },
+          thinking: { type: "adaptive", display: "updates" },
+          betas: ["server-side-fallback-2026-07-01", "thinking-display-updates-2026-08-18"],
+          fallbacks: "default",
+          tools,
+          messages: [{ role: "user", content: `Restock what's running low. Spending limit for this run: ${fmt(limitCents)} including VAT.` }],
+        },
+        out,
+        signal,
+        recordMode() ? { kind: "restock", fingerprint: fp, meta: { limitCents, orderSuppliers } } : null,
+      );
+      if (result.refused) {
         out({ type: "error", message: "The model declined this request." });
         return null;
       }
+      if (result.error && !submitted) {
+        out({ type: "error", message: claudeErrorMessage(result.error) });
+        return null;
+      }
     }
-  } catch (err) {
-    if (!submitted) {
-      out({ type: "error", message: claudeErrorMessage(err) });
-      return null;
+
+    if (!submitted && checkouts.size) {
+      // The agent stopped before submitting: verify any unverified order ourselves, then route it.
+      for (const o of checkouts.values()) {
+        if (!verified.has(o.id)) verify(o.id, await toolkit.call("get_order", { id: o.id }, { ref: { proposalId } }));
+      }
+      const bad = [...checkouts.values()].filter((o) => !verified.has(o.id));
+      if (bad.length) {
+        out({ type: "error", message: `PayPal does not confirm ${bad.map((o) => o.id).join(", ")}; nothing was sent for approval.` });
+        return null;
+      }
+      await saveProposal(proposalId, [...checkouts.values()], limitCents, "Restock orders prepared by the purchasing agent.", log);
+      submitted = true;
+      out({ type: "result", kind: "proposal", id: proposalId });
     }
-  }
-  if (!submitted && checkouts.size) {
-    await saveProposal(proposalId, [...checkouts.values()], limitCents, "Restock orders prepared by the purchasing agent.", log);
-    submitted = true;
-    out({ type: "result", kind: "proposal", id: proposalId });
+  } finally {
+    await toolkit.close();
   }
   if (!submitted) {
     out({ type: "error", message: "The agent stopped before preparing any order. Please try again." });
@@ -283,6 +382,46 @@ export async function runRestockAgent(emit: Emit, signal?: AbortSignal): Promise
     if (p) p.agentLog = log;
   });
   return proposalId;
+}
+
+/**
+ * Demo-only fallback when the visitor's stock or limit differs from the recorded run: a greedy
+ * buyer (zero stock first, then hygiene and food safety, then bar) driven through the agent's
+ * own tools, so carts, limits, PayPal orders and the toolkit verification are identical.
+ * Never used when Claude is available.
+ */
+async function runFallbackRestock(tools: Parameters<typeof callTool>[0], state: AppState, limitCents: number): Promise<void> {
+  const call = (tool: string, input: Record<string, unknown> = {}) => callTool(tools, { id: `fallback_${tool}_${crypto.randomUUID().slice(0, 8)}`, tool, input });
+  await call("check_inventory");
+  const low = lowStock(state);
+  const suppliers = [...new Set(low.map((i) => i.supplierId))];
+  await Promise.all(suppliers.map((supplier_id) => call("browse_store", { supplier_id })));
+  const rank = (i: (typeof low)[number]) => (i.onHand === 0 ? 0 : supplierById(i.supplierId)?.category === "cleaning" ? 1 : 2);
+  let remaining = limitCents;
+  const carts = new Map<string, { sku: string; qty: number; reason: string }[]>();
+  for (const item of [...low].sort((a, b) => rank(a) - rank(b) || b.par - b.onHand - (a.par - a.onHand))) {
+    const p = STORE_PRODUCTS.find((x) => x.sku === item.sku && x.supplierId === item.supplierId);
+    if (!p) continue;
+    const unit = p.unitPriceCents + pctOf(p.unitPriceCents, p.vatRate);
+    const qty = Math.min(item.par - item.onHand, p.inStock, Math.floor(remaining / unit));
+    if (qty < 1) continue;
+    remaining -= qty * unit;
+    const lines = carts.get(item.supplierId) ?? [];
+    lines.push({ sku: p.sku, qty, reason: `on hand ${item.onHand}, par ${item.par}${qty < item.par - item.onHand ? "; partial, spending limit" : ""}` });
+    carts.set(item.supplierId, lines);
+  }
+  if (!carts.size) return;
+  const created: string[] = [];
+  for (const [supplier_id, items] of carts) {
+    const r = await call("create_checkout", { supplier_id, items });
+    const id = /"paypal_order_id":"([A-Z0-9]+)"/.exec(r)?.[1];
+    if (id) created.push(id);
+  }
+  await Promise.all(created.map((id) => call("get_order", { id })));
+  const left = low.filter((i) => ![...carts.values()].flat().some((l) => l.sku === i.sku));
+  await call("submit_for_approval", {
+    summary: `Bought ${[...carts.values()].flat().length} item lines within the ${fmt(limitCents)} limit (${fmt(limitCents - remaining)} incl. VAT).${left.length ? ` Left for the next order: ${left.map((i) => i.name).join(", ")}.` : ""}`,
+  });
 }
 
 async function saveProposal(id: string, orders: StoreOrder[], limitCents: number, summary: string, log: AgentEvent[]) {
@@ -302,8 +441,18 @@ async function saveProposal(id: string, orders: StoreOrder[], limitCents: number
   });
 }
 
-/** Approve and pay an order with the card on file: confirm-payment-source, then capture. */
+/**
+ * Approve and pay an order with the card on file: re-read it through the PayPal Agent Toolkit
+ * (refuse if PayPal's amount or status differs from what the owner approved), then
+ * confirm-payment-source and capture over REST.
+ */
 async function payOrder(order: StoreOrder, ref: { proposalId?: string; orderId: string }): Promise<StoreOrder> {
+  try {
+    const check = await withToolkit(async (tk) => checkOrderMatches(order, await tk.call("get_order", { id: order.id }, { ref })));
+    if (!check.ok) return { ...order, error: `Not paid: ${check.reason}.` };
+  } catch (err) {
+    return { ...order, error: `Not paid: could not verify the order on PayPal (${err instanceof Error ? err.message : "toolkit error"}).` };
+  }
   const card = await ensureCardOnFile();
   // One idempotency suffix per approval attempt: double clicks are blocked by the
   // proposal lock, and PayPal itself refuses to capture an order twice.

@@ -1,5 +1,5 @@
 import { agentStream } from "@/lib/agent-stream";
-import { claudeConfigured } from "@/lib/claude";
+import { claudeAvailable } from "@/lib/claude";
 import { assertSameOrigin, errorResponse, eurosToCents, HttpError, readJson } from "@/lib/http";
 import { fmt } from "@/lib/money";
 import { runPaymentPlanner } from "@/lib/planner";
@@ -10,7 +10,7 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
-    if (!claudeConfigured()) throw new HttpError("Claude is not configured: add ANTHROPIC_API_KEY to .env.local.", 503);
+    if (!claudeAvailable()) throw new HttpError("Claude is not configured: add ANTHROPIC_API_KEY to .env.local.", 503);
     const body = await readJson<{ cashCapEur?: unknown }>(request);
     if (body.cashCapEur !== undefined) {
       const cents = eurosToCents(body.cashCapEur, { min: 1, max: 100_000 });
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
         }
       });
     }
-    return agentStream("payment-run", (emit, signal) => runPaymentPlanner(emit, signal), request.signal);
+    return await agentStream("payment-run", (emit, signal) => runPaymentPlanner(emit, signal), request.signal);
   } catch (err) {
     return errorResponse(err);
   }

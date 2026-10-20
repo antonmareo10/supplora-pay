@@ -19,6 +19,11 @@ export function ActorBadge({ actor }: { actor: AuditEntry["actor"] }) {
 export function ApiLine({ api }: { api: NonNullable<AuditEntry["api"]> }) {
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-muted">
+      {api.via === "toolkit" && (
+        <span className="rounded-full border border-paypal/25 bg-[#e5ecf8] px-1.5 py-px text-[10.5px] font-semibold text-paypal" title="Called through the official PayPal Agent Toolkit (MCP server, in-process)">
+          Agent Toolkit · MCP
+        </span>
+      )}
       <Mono className={cx("break-all rounded px-1.5 py-px", api.ok ? "bg-paper-2" : "bg-terracotta-soft text-terracotta")}>
         {api.method} {api.endpoint}
       </Mono>

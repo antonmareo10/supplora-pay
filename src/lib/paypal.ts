@@ -5,6 +5,7 @@
 //    request bodies, tokens and credentials never do.
 
 import { toDecimalString } from "./money";
+import { currentStateKey, demoMode } from "./session";
 import { audit, readState, updateState } from "./state";
 import type { AuditEntry, CartLine } from "./types";
 
@@ -78,6 +79,29 @@ async function accessToken(force = false): Promise<string> {
   return tokenCache.pending;
 }
 
+/** OAuth token for the official PayPal Agent Toolkit (sandbox only, same cache as the REST client). */
+export function sandboxAccessToken(): Promise<string> {
+  baseUrl();
+  return accessToken();
+}
+
+// Public demo (DEMO_MODE): cap PayPal writes so an open URL cannot be used to hammer the sandbox
+// app. One full click-through of the demo makes about ten writes.
+const DEMO_WRITES_PER_SESSION_HOUR = 40;
+const DEMO_WRITES_PER_HOUR = 400;
+const writeLog = ((globalThis as typeof globalThis & { __supploraWrites?: { at: number; key: string }[] }).__supploraWrites ??= []);
+
+async function demoWriteGuard(): Promise<void> {
+  if (!demoMode()) return;
+  const key = await currentStateKey();
+  const hourAgo = Date.now() - 3_600_000;
+  while (writeLog.length && writeLog[0].at < hourAgo) writeLog.shift();
+  if (writeLog.length >= DEMO_WRITES_PER_HOUR || writeLog.filter((w) => w.key === key).length >= DEMO_WRITES_PER_SESSION_HOUR) {
+    throw new PayPalError("The public demo's PayPal sandbox limit for this hour is reached. Try again later, or run the app with your own sandbox app.", 429);
+  }
+  writeLog.push({ at: Date.now(), key });
+}
+
 interface PayPalErrorBody {
   name?: string;
   message?: string;
@@ -94,6 +118,8 @@ async function request<T>(opts: {
   ref?: AuditEntry["ref"];
   amountCents?: number;
   resourceId?: (json: T) => string | undefined;
+  /** Demo housekeeping calls are not counted against the visitor's write limit. */
+  housekeeping?: boolean;
 }): Promise<T> {
   const doFetch = async (token: string) =>
     fetch(`${baseUrl()}${opts.path}`, {
@@ -109,6 +135,7 @@ async function request<T>(opts: {
       signal: AbortSignal.timeout(30_000),
     });
 
+  if (opts.method === "POST" && !opts.housekeeping) await demoWriteGuard();
   const started = Date.now();
   let res: Response;
   try {
@@ -215,6 +242,22 @@ export async function createPayoutBatch(input: {
         sender_item_id: i.senderItemId,
       })),
     },
+  });
+}
+
+/**
+ * Cancel an UNCLAIMED payout item: PayPal returns the funds to the sender at once (instead of
+ * after 30 days). Used only by the public demo's housekeeping, never by an agent.
+ */
+export async function cancelUnclaimedPayoutItem(itemId: string, amountCents: number): Promise<{ transaction_status?: string }> {
+  if (!/^[A-Z0-9]{6,40}$/.test(itemId)) throw new PayPalError("Invalid payout item id", 400);
+  return request<{ transaction_status?: string }>({
+    method: "POST",
+    path: `/v1/payments/payouts-item/${itemId}/cancel`,
+    label: "Demo housekeeping: unclaimed sandbox payout returned to the demo account",
+    amountCents,
+    housekeeping: true,
+    resourceId: (j) => `${itemId} · ${j.transaction_status ?? ""}`,
   });
 }
 

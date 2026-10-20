@@ -3,9 +3,10 @@ import { connection } from "next/server";
 import { ReviewAllButton, UploadZone } from "@/components/client/InboxActions";
 import { DocCard } from "@/components/DocCard";
 import { PageHeader } from "@/components/ui";
-import { claudeConfigured } from "@/lib/claude";
+import { claudeAvailable } from "@/lib/claude";
 import { businessToday } from "@/lib/dates";
 import { fmt } from "@/lib/money";
+import { demoMode } from "@/lib/session";
 import { readState } from "@/lib/state";
 
 export const metadata: Metadata = { title: "Inbox" };
@@ -24,7 +25,7 @@ export default async function InboxPage() {
       <PageHeader
         kicker="Inbox"
         title="Supplier documents"
-        actions={<ReviewAllButton pendingIds={pending} claudeReady={claudeConfigured()} />}
+        actions={<ReviewAllButton pendingIds={pending} claudeReady={claudeAvailable()} />}
       >
         Invoices forwarded from your email or snapped at the kitchen door. Claude reads each one; Supplora checks it against the signed
         delivery note and your price history.
@@ -36,7 +37,14 @@ export default async function InboxPage() {
       </PageHeader>
 
       <div className="mb-5">
-        <UploadZone />
+        {demoMode() ? (
+          <p className="rounded-2xl border border-dashed border-line-2 bg-paper/60 px-5 py-4 text-sm text-ink-2">
+            <span className="font-medium text-ink">Uploads are off in the public demo.</span> Nothing here calls Claude: the six sample invoices replay
+            Claude&rsquo;s recorded readings. Run the app with your own Anthropic key (see the README) to read your own invoices.
+          </p>
+        ) : (
+          <UploadZone />
+        )}
       </div>
 
       <ul className="grid gap-3 lg:grid-cols-2">

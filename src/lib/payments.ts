@@ -6,8 +6,9 @@ import { RESTAURANT, supplierById } from "@/data/seed";
 import { effective, isSettled } from "./ap";
 import { businessToday } from "./dates";
 import { fmt, fromDecimalString, pctOf } from "./money";
-import { createPayoutBatch, getPayoutBatch, PayPalError, type PayoutBatchResponse } from "./paypal";
+import { cancelUnclaimedPayoutItem, createPayoutBatch, getPayoutBatch, PayPalError, type PayoutBatchResponse } from "./paypal";
 import { recheckAll } from "./review";
+import { currentStateKey, demoMode } from "./session";
 import { auditEntry, readState, updateState } from "./state";
 import type { AppState, PaymentStatus, PayoutBatchRecord, PlannedPayment } from "./types";
 
@@ -35,6 +36,42 @@ function noteFor(p: PlannedPayment): string {
   if (p.withheldCents) parts.push(`${fmt(p.withheldCents)} withheld pending a credit note (details sent by email).`);
   if (p.discountCents) parts.push(`Early-payment discount of ${fmt(p.discountCents)} applied per your terms.`);
   return parts.join(" ");
+}
+
+// ---------------------------------------------------------------------------
+// Public-demo housekeeping (DEMO_MODE only). Demo payouts go to placeholder receivers, so they
+// end UNCLAIMED and PayPal would hold the money for 30 days: a few judges clicking through would
+// drain the sandbox account. Unclaimed demo payouts are cancelled (PayPal returns the funds at
+// once) when their session resets, when they are older than STALE_MS, or, if a payout is refused
+// for insufficient funds, before one retry. Visitors' own ledgers are never rewritten: a
+// reconciliation in that session would show the item as RETURNED on PayPal's side.
+
+const STALE_MS = 20 * 60 * 1000;
+type DemoPayout = { at: number; cents: number; key: string };
+const demoPayouts = ((globalThis as typeof globalThis & { __supploraDemoPayouts?: Map<string, DemoPayout> }).__supploraDemoPayouts ??= new Map());
+
+async function returnDemoPayouts(pick: (p: DemoPayout) => boolean, max = 25): Promise<{ count: number; cents: number }> {
+  let count = 0;
+  let cents = 0;
+  for (const [itemId, p] of [...demoPayouts.entries()].filter(([, p]) => pick(p)).slice(0, max)) {
+    try {
+      await cancelUnclaimedPayoutItem(itemId, p.cents);
+      count++;
+      cents += p.cents;
+      demoPayouts.delete(itemId);
+    } catch (err) {
+      // Already claimed or returned: nothing left to recover. Anything else: retry next sweep.
+      if (err instanceof PayPalError && err.status >= 400 && err.status < 500) demoPayouts.delete(itemId);
+    }
+  }
+  return { count, cents };
+}
+
+/** Demo only: return this visitor's unclaimed sandbox payouts (called on Reset demo). */
+export async function returnSessionDemoPayouts(): Promise<void> {
+  if (!demoMode()) return;
+  const key = await currentStateKey();
+  await returnDemoPayouts((p) => p.key === key);
 }
 
 export async function approvePayments(planId: string, docIds: string[]): Promise<PayoutBatchRecord> {
@@ -90,10 +127,9 @@ export async function approvePayments(planId: string, docIds: string[]): Promise
   });
 
   // 2. Send the batch to PayPal (outside the state lock).
-  let response: PayoutBatchResponse;
-  try {
-    response = await createPayoutBatch({
-      senderBatchId: locked.senderBatchId,
+  const send = (senderBatchId: string) =>
+    createPayoutBatch({
+      senderBatchId,
       subject: `Payment from ${RESTAURANT.name}`,
       message: `${RESTAURANT.name} has sent you a payment for your invoice. Thank you!`,
       ref: { planId },
@@ -104,6 +140,21 @@ export async function approvePayments(planId: string, docIds: string[]): Promise
         senderItemId: p.docId,
       })),
     });
+  let response: PayoutBatchResponse;
+  const demo = demoMode();
+  const key = demo ? await currentStateKey() : "";
+  try {
+    if (demo) await returnDemoPayouts((p) => Date.now() - p.at > STALE_MS && p.key !== key);
+    try {
+      response = await send(locked.senderBatchId);
+    } catch (err) {
+      // Demo only: the shared sandbox account ran dry; return other sessions' unclaimed payouts, retry once.
+      if (!(demo && err instanceof PayPalError && /INSUFFICIENT_FUNDS/.test(`${err.issue} ${err.message}`))) throw err;
+      const back = await returnDemoPayouts((p) => p.key !== key);
+      if (!back.count) throw err;
+      locked.senderBatchId = `${locked.senderBatchId}-r`;
+      response = await send(locked.senderBatchId);
+    }
   } catch (err) {
     const message = err instanceof PayPalError ? err.message : err instanceof Error ? err.message : "PayPal error";
     await updateState((s) => {
@@ -116,7 +167,8 @@ export async function approvePayments(planId: string, docIds: string[]): Promise
         if (doc) doc.payment = { status: "unpaid", error: message };
       }
     });
-    throw new PaymentError(`PayPal rejected the payout batch: ${message}`, 502);
+    const hint = demo && /INSUFFICIENT_FUNDS/.test(message) ? " The public demo's sandbox account is out of test funds right now; try again in a few minutes." : "";
+    throw new PaymentError(`PayPal rejected the payout batch: ${message}${hint}`, 502);
   }
 
   // 3. Record the batch.
@@ -177,13 +229,14 @@ export async function syncBatch(batchId: string): Promise<PayoutBatchRecord> {
   if (running) return running;
   const job = (async () => {
     const res = await getPayoutBatch(batchId, { planId: current.planId, batchId });
-    return updateState((s) => applyBatch(s, batchId, res));
+    const key = await currentStateKey();
+    return updateState((s) => applyBatch(s, batchId, res, key));
   })().finally(() => inflight.delete(batchId));
   inflight.set(batchId, job);
   return job;
 }
 
-function applyBatch(s: AppState, batchId: string, res: PayoutBatchResponse): PayoutBatchRecord {
+function applyBatch(s: AppState, batchId: string, res: PayoutBatchResponse, stateKey: string): PayoutBatchRecord {
   const batch = s.batches.find((b) => b.id === batchId)!;
   const plan = s.plans.find((p) => p.id === batch.planId);
   batch.status = res.batch_header.batch_status;
@@ -200,6 +253,7 @@ function applyBatch(s: AppState, batchId: string, res: PayoutBatchResponse): Pay
     item.transactionStatus = it.transaction_status;
     item.errorName = it.errors?.name;
     if (before === it.transaction_status) continue;
+    if (it.transaction_status === "UNCLAIMED" && demoMode()) demoPayouts.set(it.payout_item_id, { at: Date.now(), cents: item.amountCents, key: stateKey });
     const mapped = itemToStatus(it.transaction_status);
     const doc = s.documents.find((d) => d.id === item.docId);
     if (doc) {

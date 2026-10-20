@@ -1,5 +1,5 @@
 import { agentStream } from "@/lib/agent-stream";
-import { claudeConfigured } from "@/lib/claude";
+import { claudeAvailable } from "@/lib/claude";
 import { assertSameOrigin, errorResponse, eurosToCents, HttpError, readJson } from "@/lib/http";
 import { fmt } from "@/lib/money";
 import { paypalConfigured } from "@/lib/paypal";
@@ -11,7 +11,7 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
-    if (!claudeConfigured()) throw new HttpError("Claude is not configured: add ANTHROPIC_API_KEY to .env.local.", 503);
+    if (!claudeAvailable()) throw new HttpError("Claude is not configured: add ANTHROPIC_API_KEY to .env.local.", 503);
     if (!paypalConfigured()) throw new HttpError("PayPal is not configured: add the sandbox credentials to .env.local.", 503);
     const body = await readJson<{ limitEur?: unknown }>(request);
     if (body.limitEur !== undefined) {
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
         }
       });
     }
-    return agentStream("restock", (emit, signal) => runRestockAgent(emit, signal), request.signal);
+    return await agentStream("restock", (emit, signal) => runRestockAgent(emit, signal), request.signal);
   } catch (err) {
     return errorResponse(err);
   }
