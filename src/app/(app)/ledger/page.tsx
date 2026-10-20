@@ -1,26 +1,24 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { connection } from "next/server";
 import { AuditLog } from "@/components/client/AuditLog";
+import { PayablesSection } from "@/components/client/PayablesSection";
 import { orderStatus } from "@/components/OrderCard";
 import { Card, Kpi, Mono, PageHeader, Pill, SectionTitle } from "@/components/ui";
 import { supplierById } from "@/data/seed";
-import { effective, ledgerStats } from "@/lib/ap";
+import { ledgerStats } from "@/lib/ap";
 import { businessToday, fmtDateTime } from "@/lib/dates";
 import { fmt } from "@/lib/money";
+import { buildPayableRows } from "@/lib/payables-view";
 import { readState } from "@/lib/state";
 
 export const metadata: Metadata = { title: "Ledger" };
-
-const PAY_TONE = { paid: "olive", unclaimed: "olive", processing: "ledger", scheduled: "ledger", failed: "terracotta", unpaid: "muted", returned: "terracotta" } as const;
-const PAY_LABEL = { paid: "paid", unclaimed: "sent · unclaimed", processing: "paying", scheduled: "paying", failed: "failed", unpaid: "open", returned: "returned" } as const;
 
 export default async function LedgerPage() {
   await connection();
   const state = await readState();
   const today = businessToday();
   const s = ledgerStats(state, today);
-  const docs = state.documents.filter((d) => d.review);
+  const payableRows = buildPayableRows(state);
   const apiCalls = state.audit.filter((a) => a.actor === "paypal").length;
 
   return (
@@ -63,63 +61,19 @@ export default async function LedgerPage() {
       </Card>
 
       <section aria-labelledby="invoices">
-        <SectionTitle id="invoices" kicker="Accounts payable" title="Invoices" />
-        <Card className="table-wrap">
-          <table className="w-full min-w-[760px] text-sm">
-            <thead>
-              <tr className="border-b border-line bg-paper/60 text-left text-[11px] uppercase tracking-wider text-muted">
-                <th scope="col" className="py-2.5 pl-5 pr-2 font-semibold">Supplier · invoice</th>
-                <th scope="col" className="px-2 py-2.5 text-right font-semibold">Invoice</th>
-                <th scope="col" className="px-2 py-2.5 text-right font-semibold">Withheld</th>
-                <th scope="col" className="px-2 py-2.5 text-right font-semibold">Discount</th>
-                <th scope="col" className="px-2 py-2.5 text-right font-semibold">Paid</th>
-                <th scope="col" className="px-2 py-2.5 font-semibold">PayPal batch · item</th>
-                <th scope="col" className="py-2.5 pl-2 pr-5 text-right font-semibold">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {docs.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="py-8 text-center text-muted">
-                    Nothing reviewed yet. <Link href="/inbox" className="text-ledger hover:underline">Review the inbox</Link>.
-                  </td>
-                </tr>
-              )}
-              {docs.map((d) => {
-                const r = d.review!;
-                const e = effective(d)!;
-                const status = e.action === "hold" && d.payment.status === "unpaid" ? "held" : d.payment.status;
-                return (
-                  <tr key={d.id} className="border-b border-line last:border-0">
-                    <td className="py-2.5 pl-5 pr-2">
-                      <Link href={`/inbox/${d.id}`} className="font-medium text-ink hover:text-ledger">
-                        {supplierById(r.supplierId)?.name ?? r.extraction.supplier_name}
-                      </Link>
-                      <span className="block text-xs text-muted">{r.extraction.invoice_number}</span>
-                    </td>
-                    <td className="num px-2 py-2.5 text-right">{fmt(r.invoiceCents)}</td>
-                    <td className="num px-2 py-2.5 text-right text-terracotta">{e.withheldCents ? fmt(e.withheldCents) : "—"}</td>
-                    <td className="num px-2 py-2.5 text-right text-olive">{d.payment.discountCents ? fmt(d.payment.discountCents) : "—"}</td>
-                    <td className="num px-2 py-2.5 text-right font-medium">{d.payment.amountCents != null && d.payment.status !== "failed" ? fmt(d.payment.amountCents) : "—"}</td>
-                    <td className="px-2 py-2.5">
-                      {d.payment.batchId ? (
-                        <>
-                          <Mono>{d.payment.batchId}</Mono>
-                          {d.payment.payoutItemId && <Mono className="block text-muted">{d.payment.payoutItemId}</Mono>}
-                        </>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 pl-2 pr-5 text-right">
-                      <Pill tone={status === "held" ? "terracotta" : PAY_TONE[d.payment.status]}>{status === "held" ? "held" : PAY_LABEL[d.payment.status]}</Pill>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </Card>
+        <SectionTitle
+          id="invoices"
+          kicker="Accounts payable"
+          title="Payables"
+          aside={<span className="text-xs text-muted">Interactive grid · AG Grid</span>}
+        />
+        {payableRows.length === 0 ? (
+          <Card className="px-6 py-10 text-center text-muted">Nothing reviewed yet. Review the inbox to populate the ledger.</Card>
+        ) : (
+          <Card className="p-4 sm:p-5">
+            <PayablesSection rows={payableRows} today={today} />
+          </Card>
+        )}
       </section>
 
       {state.orders.length > 0 && (

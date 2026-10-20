@@ -25,7 +25,7 @@ Supplora Pay closes that loop: **read → verify → plan → approve → pay �
 | **3. Payment run** | A Claude agent with tools builds the week's plan: due dates first, early-payment discounts captured, held invoices excluded, the owner's cash cap respected. **Nothing is paid until the owner approves** (one payment or all). Approved payments go out as one **PayPal Payouts** batch; batch and item status are polled live. | `/payments` |
 | **4. Disputes** | For held and partially paid invoices, Claude drafts a polite credit-note request in the supplier's language with the evidence. Copy it, open it in your mail app, mark it sent. | `/disputes` |
 | **5. Agentic reorder** | A purchasing agent checks stock against par, reads the suppliers' store catalogs and creates **PayPal Orders v2** checkouts within a spending limit. It cannot pay: on approval the order is confirmed with the restaurant's card on file (a **PayPal Vault** token) and captured. | `/reorder`, `/store/[supplier]` |
-| **6. Ledger** | Paid, held and disputed amounts, money saved, and an audit log of every agent decision and every PayPal API call (method, endpoint, status, resource id, idempotency key, debug id; never credentials). | `/ledger` |
+| **6. Ledger** | Paid, held and disputed amounts, money saved, and an audit log of every agent decision and every PayPal API call (method, endpoint, status, resource id, idempotency key, debug id; never credentials). The payables are an interactive **AG Grid** dashboard: sort, per-column filters, quick search, status chips, group-by with live subtotals, a filter-aware totals row and CSV export. | `/ledger` |
 
 ### The six sample invoices (and what Supplora Pay catches)
 
@@ -88,7 +88,7 @@ Agent runs use the server-side refusal fallback (`fallbacks: "default"`) and `th
 ## Architecture
 
 ```
-Browser (Next.js App Router, React 19, Tailwind 4)
+Browser (Next.js App Router, React 19, Tailwind 4, AG Grid — payables/ledger dashboard)
   │  server components read state; client components call route handlers
   ▼
 Route handlers (/app/api/*)  ──same-origin check, input validation──┐
