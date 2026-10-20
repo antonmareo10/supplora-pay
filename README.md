@@ -4,7 +4,7 @@
 >
 > Supplora Pay does a **three-way match** on every supplier invoice: the invoice (read by Claude) ↔ the **signed delivery note** (*albarán*) ↔ the restaurant's **price history**. Every euro is checked in integer cents by deterministic rules. It then plans the week's payments within a cash cap and pays suppliers through **PayPal Payouts** once the owner approves. A purchasing agent restocks low stock through **PayPal Orders v2** checkouts and verifies them with the official **PayPal Agent Toolkit**. It can never capture a payment.
 
-It grows out of [Supplora](https://www.supplora.app), an AI tool that reads restaurant delivery notes at the kitchen door and pushes them into the restaurant's ERP, in daily use at a restaurant in Spain. That is where the delivery notes and price history Supplora Pay matches against come from. In this repo they are seeded (`src/data/seed.ts`) and the restaurant, suppliers and people are fictional.
+It grows out of [Supplora](https://www.supplora.app), an AI tool that reads restaurant delivery notes at the kitchen door and pushes them into the restaurant's ERP, in production at a family-run restaurant in Spain since March 2026 (715 delivery notes read and 103 supplier price increases flagged, worth €1,876, by September 2026). That is where the delivery notes and price history Supplora Pay matches against come from. In this repo they are seeded (`src/data/seed.ts`) and the restaurant, suppliers and people are fictional.
 
 Built for the **PayPal AI Hackathon** (2026) · *Best Use of PayPal + AI* · *Best Use of Agentic Commerce* · AG Grid sponsor prize. MIT licensed.
 
@@ -142,7 +142,7 @@ AG Studio (and its Studio Agent Framework) was evaluated and not used: it is a c
 |---|---|
 | **Technical implementation** | Integer-cent rules engine with tests (`checks.ts`), Claude tool-runner agents with validation tools, PayPal Payouts / Orders v2 / Vault v3 over REST with idempotency + audit, the PayPal Agent Toolkit as an in-process MCP server behind a tested allowlist, reconciliation, per-session demo state, record/replay of real agent runs. |
 | **Design** | One coherent UI from inbox to ledger, an agent timeline that shows every tool call, a plan-vs-cash-cap view, and the AG Grid + AG Charts ledger. |
-| **Impact** | Overcharges, short deliveries and duplicates are caught *before* paying; discounts are captured. It is built on a product already used daily in a real restaurant. |
+| **Impact** | Overcharges, short deliveries and duplicates are caught *before* paying; discounts are captured. It is built on a product in production at a real restaurant: 715 delivery notes read and €1,876 of price increases flagged (Mar–Sep 2026). |
 | **Innovation** | Three-way match + agentic payments with a hard human-approval boundary. Payees never come from documents. A keyless public demo that replays real Claude runs against live tools. |
 | **Presentation** | The hosted demo, [docs/RECORDING.md](docs/RECORDING.md), Devpost screenshots in `docs/screenshots/devpost/` with [captions](docs/screenshots/devpost/CAPTIONS.md). |
 | **Best Use of PayPal + AI** | Claude reads, checks and plans; PayPal Payouts pays only what the rules and the owner approve. |
