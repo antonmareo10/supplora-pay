@@ -130,7 +130,7 @@ function FindingCell(p: ICellRendererParams<PayableRow>) {
   if (p.node.rowPinned || !p.data) return null;
   const sev = p.data.findingSeverity;
   return (
-    <span className="flex items-center gap-2 leading-tight">
+    <span className="flex h-full items-center gap-2 leading-tight">
       <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full", sev ? SEVERITY_DOT[sev] : "bg-line-2")} aria-hidden />
       <span className="truncate text-ink-2">{p.data.finding}</span>
       {p.data.findingCount > 1 && <span className="shrink-0 rounded-full bg-paper-2 px-1.5 text-[11px] text-muted">+{p.data.findingCount - 1}</span>}
@@ -151,17 +151,21 @@ function FindingsTooltip(p: ITooltipParams<PayableRow>) {
         <p className="text-ink-2">No issues: matches the delivery note and price history.</p>
       ) : (
         <ul className="space-y-2">
-          {row.findings.map((f, i) => (
-            <li key={i} className="flex gap-2">
-              <span className={cx("mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full", SEVERITY_DOT[f.severity])} aria-hidden />
-              <span>
-                <span className="font-medium text-ink">{f.title}</span>
-                {f.withholdCents > 0 && <span className="num ml-1.5 text-terracotta">withhold {fmt(f.withholdCents)}</span>}
-                {f.withholdCents === 0 && f.impactCents > 0 && <span className="num ml-1.5 text-olive">{fmt(f.impactCents)}</span>}
-                <span className="block text-ink-2">{f.detail}</span>
-              </span>
-            </li>
-          ))}
+          {row.findings.map((f, i) => {
+            // Observations read off the document use a shortened detail as their title: show it once.
+            const repeated = f.detail.startsWith(f.title.replace(/(…|\.{3})$/, ""));
+            return (
+              <li key={i} className="flex gap-2">
+                <span className={cx("mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full", SEVERITY_DOT[f.severity])} aria-hidden />
+                <span>
+                  <span className="font-medium text-ink">{repeated ? f.detail : f.title}</span>
+                  {f.withholdCents > 0 && <span className="num ml-1.5 text-terracotta">withhold {fmt(f.withholdCents)}</span>}
+                  {f.withholdCents === 0 && f.impactCents > 0 && <span className="num ml-1.5 text-olive">{fmt(f.impactCents)}</span>}
+                  {!repeated && <span className="block text-ink-2">{f.detail}</span>}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
@@ -295,41 +299,81 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         cellRenderer: SupplierCell,
         pinned: "left",
         lockPinned: true,
-        width: 210,
+        width: 200,
         filter: "agTextColumnFilter",
       },
       {
-        headerName: "Invoice",
+        field: "status",
+        headerName: "Status",
+        cellRenderer: StatusCell,
+        width: 164,
+        enableCellChangeFlash: true,
+        comparator: (a: PayableStatus, b: PayableStatus) => STATUS_ORDER.indexOf(a) - STATUS_ORDER.indexOf(b),
+        filterValueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? STATUS_LABEL[p.data.status] : ""),
+        filter: "agTextColumnFilter",
+      },
+      {
+        // Money first: it is what the owner reads the ledger for.
+        headerName: "Amounts (EUR, VAT incl.)",
         marryChildren: true,
         children: [
-          { field: "invoiceNumber", headerName: "Number", cellRenderer: InvoiceCell, width: 140, filter: "agTextColumnFilter" },
+          { field: "invoiceCents", headerName: "Invoiced", type: "rightAligned", cellClass: "num", width: 110, valueFormatter: moneyFmt, filter: "agNumberColumnFilter", filterValueGetter: euros("invoiceCents") },
           {
-            field: "status",
-            headerName: "Status",
-            cellRenderer: StatusCell,
-            width: 150,
-            enableCellChangeFlash: true,
-            comparator: (a: PayableStatus, b: PayableStatus) => STATUS_ORDER.indexOf(a) - STATUS_ORDER.indexOf(b),
-            filterValueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? STATUS_LABEL[p.data.status] : ""),
-            filter: "agTextColumnFilter",
+            field: "withheldCents",
+            headerName: "Withheld",
+            type: "rightAligned",
+            cellClass: "num",
+            cellClassRules: { "text-terracotta": (p) => (p.value as number) > 0 } as CellClassRules<PayableRow>,
+            width: 106,
+            valueFormatter: moneyOrDash,
+            filter: "agNumberColumnFilter",
+            filterValueGetter: euros("withheldCents"),
           },
-          { field: "recommendationLabel", headerName: "Claude + rules", cellRenderer: RecommendationCell, width: 160, filter: "agTextColumnFilter" },
+          {
+            field: "paidCents",
+            headerName: "Paid",
+            type: "rightAligned",
+            cellClass: "num font-medium",
+            width: 110,
+            enableCellChangeFlash: true,
+            valueFormatter: moneyOrDash,
+            filter: "agNumberColumnFilter",
+            filterValueGetter: euros("paidCents"),
+          },
+          { field: "savedCents", headerName: "Saved", type: "rightAligned", cellRenderer: SavedCell, width: 108 },
+          {
+            field: "discountCents",
+            headerName: "Discount",
+            type: "rightAligned",
+            cellClass: "num",
+            cellClassRules: { "text-olive": (p) => (p.value as number) > 0 } as CellClassRules<PayableRow>,
+            width: 100,
+            valueFormatter: moneyOrDash,
+          },
+        ],
+      },
+      {
+        headerName: "Why",
+        marryChildren: true,
+        children: [
           {
             field: "finding",
-            headerName: "Top finding",
+            headerName: "Top finding · hover for evidence",
             cellRenderer: FindingCell,
             tooltipField: "finding",
             tooltipComponent: FindingsTooltip,
-            flex: 1,
-            minWidth: 220,
+            width: 260,
             filter: "agTextColumnFilter",
           },
+          { field: "recommendationLabel", headerName: "Claude + rules", cellRenderer: RecommendationCell, width: 150, filter: "agTextColumnFilter" },
           {
             field: "dueDate",
             headerName: "Due",
             cellRenderer: dueCell,
             valueFormatter: dueFmt,
-            width: 120,
+            width: 116,
+            // The date picker does not fit a floating filter this narrow; the header menu has it.
+            floatingFilter: false,
             filter: "agDateColumnFilter",
             filterParams: {
               comparator: (filterDate: Date, cellValue: string | null) => {
@@ -344,47 +388,9 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         ],
       },
       {
-        headerName: "Amounts (EUR, VAT incl.)",
-        marryChildren: true,
+        headerName: "Document · PayPal",
         children: [
-          { field: "invoiceCents", headerName: "Invoiced", type: "rightAligned", cellClass: "num", width: 116, valueFormatter: moneyFmt, filter: "agNumberColumnFilter", filterValueGetter: euros("invoiceCents") },
-          {
-            field: "withheldCents",
-            headerName: "Withheld",
-            type: "rightAligned",
-            cellClass: "num",
-            cellClassRules: { "text-terracotta": (p) => (p.value as number) > 0 } as CellClassRules<PayableRow>,
-            width: 112,
-            valueFormatter: moneyOrDash,
-            filter: "agNumberColumnFilter",
-            filterValueGetter: euros("withheldCents"),
-          },
-          {
-            field: "discountCents",
-            headerName: "Discount",
-            type: "rightAligned",
-            cellClass: "num",
-            cellClassRules: { "text-olive": (p) => (p.value as number) > 0 } as CellClassRules<PayableRow>,
-            width: 106,
-            valueFormatter: moneyOrDash,
-          },
-          {
-            field: "paidCents",
-            headerName: "Paid",
-            type: "rightAligned",
-            cellClass: "num font-medium",
-            width: 114,
-            enableCellChangeFlash: true,
-            valueFormatter: moneyOrDash,
-            filter: "agNumberColumnFilter",
-            filterValueGetter: euros("paidCents"),
-          },
-          { field: "savedCents", headerName: "Saved", type: "rightAligned", cellRenderer: SavedCell, width: 116 },
-        ],
-      },
-      {
-        headerName: "PayPal",
-        children: [
+          { field: "invoiceNumber", headerName: "Invoice no.", cellRenderer: InvoiceCell, width: 136, filter: "agTextColumnFilter" },
           {
             headerName: "Payout batch · item",
             colId: "paypal",

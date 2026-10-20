@@ -75,7 +75,10 @@ function parse(text: string): { data: Record<string, unknown>; error?: string; s
   // The toolkit reports API failures as JSON: {ok:false,status,code,message} or {error:{message}}.
   if (data.ok === false || data.error) {
     const err = data.error as { message?: string } | string | undefined;
-    const message = typeof data.message === "string" ? data.message : typeof err === "string" ? err : err?.message;
+    let message = typeof data.message === "string" ? data.message : typeof err === "string" ? err : err?.message;
+    // The toolkit sometimes repeats PayPal's text as "X: X"; keep one copy.
+    const halves = message?.split(": ");
+    if (halves?.length === 2 && halves[0].replace(/\.$/, "") === halves[1].replace(/\.$/, "")) message = halves[1];
     return { data, error: message ?? "PayPal Agent Toolkit call failed", status: typeof data.status === "number" ? data.status : undefined };
   }
   return { data, status: 200 };
