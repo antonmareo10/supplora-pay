@@ -53,8 +53,8 @@ export default function ReconcileGrid({ rows }: { rows: ReconRow[] }) {
       { field: "reference", headerName: "PayPal reference", cellRenderer: RefCell, minWidth: 220, flex: 1 },
       { field: "ledgerCents", headerName: "Ledger", type: "rightAligned", cellClass: "num", width: 110, valueFormatter: money },
       { field: "paypalCents", headerName: "PayPal", type: "rightAligned", cellClass: "num font-medium", width: 110, valueFormatter: money },
-      { field: "ledgerStatus", headerName: "Ledger status", width: 130 },
-      { field: "paypalStatus", headerName: "PayPal status", width: 190 },
+      { field: "ledgerStatus", headerName: "Ledger status", width: 170, tooltipField: "ledgerStatus" },
+      { field: "paypalStatus", headerName: "PayPal status", width: 210, tooltipField: "paypalStatus" },
       { field: "listed", headerName: "In account list", cellRenderer: ListedCell, width: 140 },
       { field: "note", headerName: "Note", minWidth: 240, flex: 1, tooltipField: "note" },
     ];

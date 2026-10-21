@@ -56,6 +56,7 @@ export async function handlePayPalWebhook(raw: string, headers: { get(name: stri
   // Verification calls are audited in a housekeeping session in the public demo (they belong to no visitor).
   const verifyKey = demoMode() ? "demo:webhooks" : "default";
   let verified: boolean;
+  const verifyStarted = Date.now();
   try {
     verified = await runWithStateKey(verifyKey, () => verifyWebhookSignature(h, id, raw, `${event.event_type} ${event.id}`));
   } catch (err) {
@@ -63,6 +64,7 @@ export async function handlePayPalWebhook(raw: string, headers: { get(name: stri
     return { status: 502, body: { error: `Could not verify the webhook with PayPal: ${err instanceof PayPalError ? err.message : "error"}` } };
   }
   if (!verified) return { status: 401, body: { error: "Webhook signature verification failed (PayPal answered FAILURE)." } };
+  const verifyMs = Date.now() - verifyStarted;
 
   if (!(await claimWebhookEvent(event.id))) return { status: 200, body: { ok: true, duplicate: true } };
   try {
@@ -83,7 +85,7 @@ export async function handlePayPalWebhook(raw: string, headers: { get(name: stri
               endpoint: "/v1/notifications/verify-webhook-signature",
               status: 200,
               ok: true,
-              durationMs: 0,
+              durationMs: verifyMs,
               resourceId: `SUCCESS · ${event.event_type} · ${event.id}`,
             },
           }),
