@@ -62,7 +62,7 @@ Two uses would make sense for this app:
 - a **payout-status task**: started on approval, it polls `GET /v1/payments/payouts/{id}` until the batch is final, instead of the browser polling;
 - a **weekly payment-run task**: a cron starts it, it builds the plan with Claude and leaves it waiting for the owner's approval.
 
-Either needs the state store moved out of the web process (Postgres or Key Value), because today's demo sessions live in the web service's memory. A project can win only one sponsor prize, so decide between the AG Grid and the Render prize before investing here.
+Either needs the state store moved out of the web process (Postgres or Key Value), because today's demo sessions live in the web service's memory.
 
 ## Option B: Vercel
 
