@@ -1,5 +1,6 @@
+import { after } from "next/server";
 import { handleWrite, HttpError, readJson } from "@/lib/http";
-import { approvePayments } from "@/lib/payments";
+import { approvePayments, sweepStaleDemoPayouts } from "@/lib/payments";
 import { paypalConfigured } from "@/lib/paypal";
 
 export const maxDuration = 60;
@@ -15,6 +16,8 @@ export async function POST(request: Request, ctx: RouteContext<"/api/plans/[id]/
       throw new HttpError("Select the payments to approve.", 400);
     }
     const batch = await approvePayments(id, docIds as string[]);
+    // Public demo: return stale unclaimed payouts (any session) after responding.
+    after(sweepStaleDemoPayouts);
     return Response.json({ batch });
   });
 }

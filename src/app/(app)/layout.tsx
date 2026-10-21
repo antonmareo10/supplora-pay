@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { connection } from "next/server";
+import { after, connection } from "next/server";
 import type { ReactNode } from "react";
 import { BrandMark } from "@/components/brand";
 import { NavLinks, type NavCounts } from "@/components/client/NavLinks";
@@ -9,6 +9,7 @@ import { lowStock } from "@/lib/ap";
 import { claudeMode } from "@/lib/claude";
 import { businessToday, fmtDayLong } from "@/lib/dates";
 import { needsDispute } from "@/lib/disputes";
+import { sweepStaleDemoPayouts } from "@/lib/payments";
 import { paypalConfigured } from "@/lib/paypal";
 import { demoMode } from "@/lib/session";
 import { readState } from "@/lib/state";
@@ -36,6 +37,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const claude = claudeMode();
   const paypal = paypalConfigured();
   const demo = demoMode();
+  // Public demo: visits also trigger the payout housekeeping sweep (throttled), after the page is sent.
+  if (demo) after(sweepStaleDemoPayouts);
 
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[264px_minmax(0,1fr)]">

@@ -6,10 +6,11 @@ import { RESTAURANT, supplierById } from "@/data/seed";
 import { effective, isPaidOrSent } from "./ap";
 import { businessToday } from "./dates";
 import { fmt, fromDecimalString, pctOf } from "./money";
-import { cancelUnclaimedPayoutItem, createPayoutBatch, getPayoutBatch, PayPalError, type PayoutBatchResponse } from "./paypal";
+import { sweepDemoPayouts, type SweepDeps, type SweepOptions, type SweepResult } from "./demo-sweep";
+import { cancelUnclaimedPayoutItem, createPayoutBatch, getPayoutBatch, paypalConfigured, PayPalError, type PayoutBatchResponse } from "./paypal";
 import { recheckAll } from "./review";
-import { currentStateKey, demoMode } from "./session";
-import { auditEntry, readState, updateState } from "./state";
+import { currentStateKey, demoMode, runWithStateKey } from "./session";
+import { auditEntry, forgetDemoPayout, listDemoPayouts, readState, registerDemoPayout, updateState } from "./state";
 import type { AppState, PaymentStatus, PayoutBatchRecord, PlannedPayment } from "./types";
 
 export class PaymentError extends Error {
@@ -39,39 +40,61 @@ function noteFor(p: PlannedPayment): string {
 }
 
 // ---------------------------------------------------------------------------
-// Public-demo housekeeping (DEMO_MODE only). Demo payouts go to placeholder receivers, so they
-// end UNCLAIMED and PayPal would hold the money for 30 days: a few judges clicking through would
-// drain the sandbox account. Unclaimed demo payouts are cancelled (PayPal returns the funds at
-// once) when their session resets, when they are older than STALE_MS, or, if a payout is refused
-// for insufficient funds, before one retry. Visitors' own ledgers are never rewritten: a
-// reconciliation in that session would show the item as RETURNED on PayPal's side.
+// Public-demo housekeeping (DEMO_MODE only). Demo payouts go to placeholder receivers, so they end
+// UNCLAIMED and PayPal would hold the money for 30 days: a few judges clicking through would drain
+// the sandbox account. Every batch is registered when it is created (state.ts, in memory or Redis)
+// and a sweep (demo-sweep.ts) cancels the UNCLAIMED items of batches older than STALE_MS, which
+// returns the money at once. Sweeps are triggered opportunistically and never block a request:
+// after the health check, after page renders, after an approval and after Reset demo (that
+// session's batches, whatever their age). If a payout is refused for insufficient funds, other
+// sessions' unclaimed payouts are returned first and the payout is retried once.
 
 const STALE_MS = 20 * 60 * 1000;
-type DemoPayout = { at: number; cents: number; key: string };
-const demoPayouts = ((globalThis as typeof globalThis & { __supploraDemoPayouts?: Map<string, DemoPayout> }).__supploraDemoPayouts ??= new Map());
+const SWEEP_EVERY_MS = 60 * 1000;
+const HOUSEKEEPING_KEY = "demo:housekeeping";
+type SweepState = { chain: Promise<unknown>; lastStale: number };
+const sweepState = ((globalThis as typeof globalThis & { __supploraSweep?: SweepState }).__supploraSweep ??= { chain: Promise.resolve(), lastStale: 0 });
 
-async function returnDemoPayouts(pick: (p: DemoPayout) => boolean, max = 25): Promise<{ count: number; cents: number }> {
-  let count = 0;
-  let cents = 0;
-  for (const [itemId, p] of [...demoPayouts.entries()].filter(([, p]) => pick(p)).slice(0, max)) {
-    try {
-      await cancelUnclaimedPayoutItem(itemId, p.cents);
-      count++;
-      cents += p.cents;
-      demoPayouts.delete(itemId);
-    } catch (err) {
-      // Already claimed or returned: nothing left to recover. Anything else: retry next sweep.
-      if (err instanceof PayPalError && err.status >= 400 && err.status < 500) demoPayouts.delete(itemId);
-    }
-  }
-  return { count, cents };
+/** Runs one sweep, serialised with any other sweep in this process. Its PayPal calls are audited in a housekeeping session. */
+function runDemoSweep(opts: SweepOptions): Promise<SweepResult> {
+  const attempt = Date.now().toString(36);
+  const deps: SweepDeps = {
+    list: listDemoPayouts,
+    forget: forgetDemoPayout,
+    getBatch: (e) => getPayoutBatch(e.batchId, { batchId: e.batchId }),
+    cancelItem: async (itemId, cents) => void (await cancelUnclaimedPayoutItem(itemId, cents, attempt)),
+    now: Date.now,
+  };
+  const run = sweepState.chain.then(() => runWithStateKey(HOUSEKEEPING_KEY, () => sweepDemoPayouts(deps, opts)));
+  sweepState.chain = run.catch(() => undefined);
+  return run;
 }
 
-/** Demo only: return this visitor's unclaimed sandbox payouts (called on Reset demo). */
-export async function returnSessionDemoPayouts(): Promise<void> {
-  if (!demoMode()) return;
-  const key = await currentStateKey();
-  await returnDemoPayouts((p) => p.key === key);
+/**
+ * Demo only: return unclaimed payouts older than STALE_MS, at most once a minute per process. Never
+ * throws; call it inside next/server `after()` so it never delays a response.
+ */
+export async function sweepStaleDemoPayouts(): Promise<void> {
+  if (!demoMode() || !paypalConfigured() || Date.now() - sweepState.lastStale < SWEEP_EVERY_MS) return;
+  sweepState.lastStale = Date.now();
+  try {
+    await runDemoSweep({ minAgeMs: STALE_MS });
+  } catch (err) {
+    console.error("[demo housekeeping] sweep failed:", err instanceof Error ? err.message : err);
+  }
+}
+
+/**
+ * Demo only: return one session's unclaimed sandbox payouts sent before `before`, whatever their age
+ * (Reset demo keeps the session cookie, so later payouts of the fresh run are left alone). Never throws.
+ */
+export async function returnSessionDemoPayouts(key: string, before: number): Promise<void> {
+  if (!demoMode() || !paypalConfigured()) return;
+  try {
+    await runDemoSweep({ minAgeMs: 0, only: (e) => e.key === key && e.at <= before });
+  } catch (err) {
+    console.error("[demo housekeeping] reset sweep failed:", err instanceof Error ? err.message : err);
+  }
 }
 
 export async function approvePayments(planId: string, docIds: string[]): Promise<PayoutBatchRecord> {
@@ -144,14 +167,13 @@ export async function approvePayments(planId: string, docIds: string[]): Promise
   const demo = demoMode();
   const key = demo ? await currentStateKey() : "";
   try {
-    if (demo) await returnDemoPayouts((p) => Date.now() - p.at > STALE_MS && p.key !== key);
     try {
       response = await send(locked.senderBatchId);
     } catch (err) {
       // Demo only: the shared sandbox account ran dry; return other sessions' unclaimed payouts, retry once.
       if (!(demo && err instanceof PayPalError && /INSUFFICIENT_FUNDS/.test(`${err.issue} ${err.message}`))) throw err;
-      const back = await returnDemoPayouts((p) => p.key !== key);
-      if (!back.count) throw err;
+      const back = await runDemoSweep({ minAgeMs: 0, only: (e) => e.key !== key }).catch(() => null);
+      if (!back?.cancelled) throw err;
       locked.senderBatchId = `${locked.senderBatchId}-r`;
       response = await send(locked.senderBatchId);
     }
@@ -171,8 +193,14 @@ export async function approvePayments(planId: string, docIds: string[]): Promise
     throw new PaymentError(`PayPal rejected the payout batch: ${message}${hint}`, 502);
   }
 
-  // 3. Record the batch.
+  // 3. Record the batch (and, in the public demo, register it for housekeeping right away, so its
+  // money comes back even if the visitor closes the tab before the batch is ever polled).
   const batchId = response.batch_header.payout_batch_id;
+  if (demo) {
+    await registerDemoPayout({ batchId, key, at: Date.now(), cents: locked.total }).catch((err) =>
+      console.error("[demo housekeeping] could not register payout batch", batchId, err instanceof Error ? err.message : err),
+    );
+  }
   return updateState((s) => {
     const plan = s.plans.find((p) => p.id === planId)!;
     const record: PayoutBatchRecord = {
@@ -229,14 +257,13 @@ export async function syncBatch(batchId: string): Promise<PayoutBatchRecord> {
   if (running) return running;
   const job = (async () => {
     const res = await getPayoutBatch(batchId, { planId: current.planId, batchId });
-    const key = await currentStateKey();
-    return updateState((s) => applyBatch(s, batchId, res, key));
+    return updateState((s) => applyBatch(s, batchId, res));
   })().finally(() => inflight.delete(batchId));
   inflight.set(batchId, job);
   return job;
 }
 
-function applyBatch(s: AppState, batchId: string, res: PayoutBatchResponse, stateKey: string): PayoutBatchRecord {
+function applyBatch(s: AppState, batchId: string, res: PayoutBatchResponse): PayoutBatchRecord {
   const batch = s.batches.find((b) => b.id === batchId)!;
   const plan = s.plans.find((p) => p.id === batch.planId);
   batch.status = res.batch_header.batch_status;
@@ -253,7 +280,6 @@ function applyBatch(s: AppState, batchId: string, res: PayoutBatchResponse, stat
     item.transactionStatus = it.transaction_status;
     item.errorName = it.errors?.name;
     if (before === it.transaction_status) continue;
-    if (it.transaction_status === "UNCLAIMED" && demoMode()) demoPayouts.set(it.payout_item_id, { at: Date.now(), cents: item.amountCents, key: stateKey });
     const mapped = itemToStatus(it.transaction_status);
     const doc = s.documents.find((d) => d.id === item.docId);
     if (doc) {
