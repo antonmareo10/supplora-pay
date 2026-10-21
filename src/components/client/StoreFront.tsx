@@ -180,6 +180,7 @@ export function StoreFront({
                 Charged to Taberna El Faro&apos;s card on file{cardLabel ? ` (${cardLabel})` : ""} through PayPal Orders v2: create, confirm with the vault
                 token, capture. Sandbox, no real money.
               </p>
+              {!paypalReady && <p className="mt-2 text-xs text-terracotta">PayPal is not configured on this server (no sandbox credentials), so checkout is off.</p>}
               {error && <ErrorNote className="mt-3">{error}</ErrorNote>}
             </>
           )}
