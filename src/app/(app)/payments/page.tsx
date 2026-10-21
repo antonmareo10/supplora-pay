@@ -13,6 +13,7 @@ import { businessToday, fmtDateTime, fmtDay } from "@/lib/dates";
 import { fmt } from "@/lib/money";
 import { paypalConfigured } from "@/lib/paypal";
 import { openInvoices } from "@/lib/planner";
+import { demoMode } from "@/lib/session";
 import { readState } from "@/lib/state";
 
 export const metadata: Metadata = { title: "Payment run" };
@@ -31,6 +32,7 @@ export default async function PaymentsPage() {
   for (const d of state.documents) if (d.review) names[d.id] = supplierById(d.review.supplierId)?.name ?? d.review.extraction.supplier_name;
   const batches = [...state.batches].reverse();
   const canRun = claudeAvailable() && open.length > 0;
+  const demo = demoMode();
 
   return (
     <div className="space-y-10">
@@ -119,7 +121,7 @@ export default async function PaymentsPage() {
         <section aria-labelledby="batches" className="space-y-4">
           <SectionTitle id="batches" kicker="PayPal Payouts API" title="Payout batches" />
           {batches.map((b) => (
-            <BatchStatus key={b.id} initial={b} names={names} />
+            <BatchStatus key={b.id} initial={b} names={names} demo={demo} />
           ))}
         </section>
       )}

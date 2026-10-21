@@ -178,13 +178,13 @@ function makeDueCell(today: string) {
     const due = p.data.dueDate;
     if (!due) return <span className="text-muted">—</span>;
     const rel = relativeDue(today, due);
-    const settled = p.data.status === "paid" || p.data.status === "sent";
+    const done = p.data.status === "paid" ? "paid" : p.data.status === "sent" ? "awaiting claim" : null;
     const overdue = rel.includes("overdue");
     const soon = rel === "due today" || rel === "due tomorrow";
     return (
       <span className="flex h-full flex-col justify-center leading-tight">
         <span className="num text-ink-2">{p.valueFormatted}</span>
-        <span className={cx("text-[11px]", settled ? "text-muted" : overdue ? "text-terracotta" : soon ? "text-saffron" : "text-muted")}>{settled ? "settled" : rel}</span>
+        <span className={cx("text-[11px]", done ? "text-muted" : overdue ? "text-terracotta" : soon ? "text-saffron" : "text-muted")}>{done ?? rel}</span>
       </span>
     );
   };
@@ -221,7 +221,7 @@ function PaypalCell(p: ICellRendererParams<PayableRow>) {
 
 const eurAxis = (v: number) => (v >= 1000 ? `€${(v / 1000).toFixed(1)}k` : `€${Math.round(v)}`);
 const SERIES = [
-  ["paid", "Paid via PayPal", PALETTE.olive2],
+  ["paid", "Sent via PayPal", PALETTE.olive2],
   ["toPay", "To pay / in flight", PALETTE.ledger2],
   ["withheld", "Withheld (credit note asked)", PALETTE.saffron],
   ["held", "Held (not paid)", PALETTE.terracotta],
@@ -331,7 +331,8 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
           },
           {
             field: "paidCents",
-            headerName: "Paid",
+            headerName: "Sent",
+            headerTooltip: "Sent through PayPal Payouts: claimed by the supplier, or awaiting their claim",
             type: "rightAligned",
             cellClass: "num font-medium",
             width: 110,

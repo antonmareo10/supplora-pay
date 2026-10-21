@@ -3,7 +3,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { DisputeDraft } from "@/components/client/DisputeDraft";
 import { DocThumb } from "@/components/DocCard";
-import { ACTION_TONE, Card, Empty, PageHeader, Pill, Stamp } from "@/components/ui";
+import { ACTION_TONE, Card, Empty, PageHeader, paymentLabel, Pill, Stamp } from "@/components/ui";
 import { supplierById } from "@/data/seed";
 import { ACTION_LABEL, effective } from "@/lib/ap";
 import { claudeAvailable } from "@/lib/claude";
@@ -85,8 +85,8 @@ export default async function DisputesPage() {
                     </ul>
                     {doc.payment.status !== "unpaid" && (
                       <p className="text-xs text-muted">
-                        Payment status: {doc.payment.status}
-                        {doc.payment.amountCents != null && ` · ${fmt(doc.payment.amountCents)} paid via PayPal`}
+                        Payment status: {paymentLabel(doc.payment.status)}
+                        {doc.payment.amountCents != null && ` · ${fmt(doc.payment.amountCents)} sent via PayPal`}
                       </p>
                     )}
                   </div>

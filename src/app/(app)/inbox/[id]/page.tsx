@@ -4,9 +4,9 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { DecisionControl, DocumentViewer, ReviewButton } from "@/components/client/ReviewControls";
 import { IconArrowLeft, IconCheck, IconTruck } from "@/components/icons";
-import { ACTION_TONE, buttonClass, Card, cx, docStatus, ErrorNote, Money, Mono, Pill, SEVERITY_LABEL, SEVERITY_TONE, SeverityIcon, Stamp } from "@/components/ui";
+import { ACTION_TONE, buttonClass, Card, cx, docStatus, ErrorNote, Money, Mono, paymentLabel, Pill, SEVERITY_LABEL, SEVERITY_TONE, SeverityIcon, Stamp } from "@/components/ui";
 import { CATALOG, DELIVERY_NOTES, supplierById } from "@/data/seed";
-import { ACTION_LABEL, effective, isSettled } from "@/lib/ap";
+import { ACTION_LABEL, effective, isPaidOrSent } from "@/lib/ap";
 import { claudeAvailable } from "@/lib/claude";
 import { businessToday, fmtDay, fmtDateTime, relativeDue } from "@/lib/dates";
 import { fmt, fmtQty, toCents } from "@/lib/money";
@@ -76,7 +76,7 @@ export default async function ReviewPage(props: PageProps<"/inbox/[id]">) {
   const title = r ? `${supplier?.name ?? r.extraction.supplier_name} · ${r.extraction.invoice_number ?? ""}` : doc.fileName;
   const lineFlags = new Map<number, Finding[]>();
   r?.findings.forEach((f) => f.lineIndex != null && lineFlags.set(f.lineIndex, [...(lineFlags.get(f.lineIndex) ?? []), f]));
-  const settled = isSettled(doc);
+  const settled = isPaidOrSent(doc);
   const partialAvailable = !!r && r.findings.some((f) => f.withholdCents > 0 && !["duplicate", "unknown_supplier", "payment_details_changed", "not_an_invoice", "currency"].includes(f.kind));
 
   return (
@@ -187,7 +187,7 @@ export default async function ReviewPage(props: PageProps<"/inbox/[id]">) {
                   <DecisionControl docId={doc.id} recommended={r.recommendation} current={e.action} locked={settled} partialAvailable={partialAvailable} />
                   {doc.payment.status !== "unpaid" && (
                     <p className="mt-3 text-sm text-ink-2">
-                      Payment: <strong>{doc.payment.status}</strong>
+                      Payment: <strong>{paymentLabel(doc.payment.status)}</strong>
                       {doc.payment.amountCents != null && <> · {fmt(doc.payment.amountCents)}</>}
                       {doc.payment.batchId && (
                         <>

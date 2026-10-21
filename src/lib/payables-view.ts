@@ -34,7 +34,7 @@ export interface PayableRow {
   invoiceCents: number;
   withheldCents: number;
   discountCents: number;
-  /** Amount actually paid (null when nothing has been paid yet). */
+  /** Amount sent through PayPal Payouts, claimed or still UNCLAIMED (null when nothing has been sent yet). */
   paidCents: number | null;
   /** Money this invoice saved the restaurant: caught overcharges + blocked duplicate + captured discount. */
   savedCents: number;
@@ -86,7 +86,7 @@ export function buildPayableRows(state: AppState): PayableRow[] {
       invoiceCents: e.invoiceCents,
       withheldCents: e.withheldCents,
       discountCents: doc.payment.discountCents ?? 0,
-      // Only money that reached PayPal's final state counts as paid (same rule as ledgerStats).
+      // Money sent through PayPal (claimed or awaiting the supplier's claim), same rule as ledgerStats().
       paidCents: paid ? doc.payment.amountCents ?? null : null,
       savedCents,
       paypalBatchId: doc.payment.batchId ?? null,

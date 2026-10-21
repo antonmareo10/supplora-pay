@@ -5,7 +5,7 @@ import { ActivityList } from "@/components/Activity";
 import { IconArrowRight, IconCheck, IconShield } from "@/components/icons";
 import { buttonClass, Card, cx, Money, SectionTitle, SeverityIcon } from "@/components/ui";
 import { RESTAURANT, supplierById } from "@/data/seed";
-import { effective, isSettled, ledgerStats, lowStock } from "@/lib/ap";
+import { effective, isPaidOrSent, ledgerStats, lowStock } from "@/lib/ap";
 import { businessToday, fmtDay, fmtDayLong } from "@/lib/dates";
 import { needsDispute } from "@/lib/disputes";
 import { fmt } from "@/lib/money";
@@ -27,7 +27,7 @@ export default async function OverviewPage() {
   const lastBatch = state.batches[state.batches.length - 1];
 
   const attention = state.documents
-    .filter((d) => d.review && !isSettled(d))
+    .filter((d) => d.review && !isPaidOrSent(d))
     .flatMap((d) =>
       d.review!.findings
         .filter((f) => f.severity === "high" || f.severity === "opportunity")
@@ -61,16 +61,17 @@ export default async function OverviewPage() {
     {
       title: "You approve; PayPal pays",
       status:
-        s.paidCount > 0 ? (
+        s.sentCount > 0 ? (
           <>
-            <Money cents={s.paidCents} /> sent in {state.batches.length} payout batch{state.batches.length === 1 ? "" : "es"}
+            <Money cents={s.sentCents} /> sent in {state.batches.length} payout batch{state.batches.length === 1 ? "" : "es"}
+            {s.awaitingClaimCount > 0 && <>; {s.awaitingClaimCount} awaiting the supplier&apos;s claim</>}
           </>
         ) : proposed.length ? (
           `${proposed.length} payments waiting for you`
         ) : (
           "Nothing approved yet"
         ),
-      done: s.paidCount > 0 && proposed.length === 0,
+      done: s.sentCount > 0 && proposed.length === 0,
       href: "/payments",
       cta: proposed.length ? "Approve" : "Payments",
     },
@@ -112,17 +113,17 @@ export default async function OverviewPage() {
             <p className="num font-display mt-2 text-6xl leading-none text-ink sm:text-7xl">{fmt(s.protectedCents)}</p>
             <p className="mt-3 max-w-md text-sm text-ink-2">
               {s.protectedCents > 0
-                ? "Overcharges caught, a double payment blocked and early-payment discounts captured, each backed by the exact numbers."
+                ? "Overcharges withheld until the supplier sends a credit note, a double payment held, and early-payment discounts captured, each backed by the exact numbers."
                 : "Review the inbox and this fills up with every overcharge, duplicate and discount Supplora finds."}
             </p>
           </div>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-4 self-end text-sm">
             <div>
-              <dt className="text-muted">Overcharges caught</dt>
+              <dt className="text-muted">Overcharges withheld</dt>
               <dd className="num text-lg font-semibold text-terracotta">{fmt(s.overchargesCaughtCents)}</dd>
             </div>
             <div>
-              <dt className="text-muted">Duplicates blocked</dt>
+              <dt className="text-muted">Duplicates held</dt>
               <dd className="num text-lg font-semibold text-terracotta">{fmt(s.duplicatesBlockedCents)}</dd>
             </div>
             <div>
@@ -131,8 +132,9 @@ export default async function OverviewPage() {
               {s.discountsAvailableCents > 0 && <dd className="text-xs text-muted">{fmt(s.discountsAvailableCents)} still available</dd>}
             </div>
             <div>
-              <dt className="text-muted">Paid via PayPal</dt>
-              <dd className="num text-lg font-semibold text-ink">{fmt(s.paidCents)}</dd>
+              <dt className="text-muted">Sent via PayPal</dt>
+              <dd className="num text-lg font-semibold text-ink">{fmt(s.sentCents)}</dd>
+              {s.awaitingClaimCents > 0 && <dd className="text-xs text-[#8a5a0c]">{fmt(s.awaitingClaimCents)} awaiting supplier claim</dd>}
               {s.openPayableCents > 0 && <dd className="text-xs text-muted">{fmt(s.openPayableCents)} still open</dd>}
             </div>
           </dl>

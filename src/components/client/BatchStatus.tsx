@@ -28,7 +28,7 @@ function batchTone(s: string): Tone {
   return "terracotta";
 }
 
-export function BatchStatus({ initial, names }: { initial: PayoutBatchRecord; names: Record<string, string> }) {
+export function BatchStatus({ initial, names, demo }: { initial: PayoutBatchRecord; names: Record<string, string>; demo?: boolean }) {
   const router = useRouter();
   const [batch, setBatch] = useState(initial);
   const [error, setError] = useState<string | null>(null);
@@ -74,7 +74,7 @@ export function BatchStatus({ initial, names }: { initial: PayoutBatchRecord; na
             {batch.feesCents != null && <span className="block text-xs text-muted">fees {fmt(batch.feesCents)}</span>}
           </span>
           <Stamp tone={batchTone(batch.status)} className={!final ? "pulse-dot" : undefined}>
-            {batch.status}
+            Batch {batch.status}
           </Stamp>
         </div>
       </header>
@@ -128,9 +128,11 @@ export function BatchStatus({ initial, names }: { initial: PayoutBatchRecord; na
         </p>
         {unclaimed && (
           <p>
-            <strong className="text-ink-2">UNCLAIMED</strong> means PayPal accepted and sent the money, but the receiver address has no sandbox PayPal
-            account yet; PayPal holds the funds until it is claimed (returned after 30 days). Point the receivers at your own sandbox accounts to see
-            SUCCESS.
+            PayPal accepted and processed the batch{batch.status === "SUCCESS" ? " (batch SUCCESS)" : ""}. With the demo&apos;s placeholder payees each
+            item waits <strong className="text-ink-2">UNCLAIMED</strong>, as a real supplier&apos;s payout would until they claim it with a PayPal
+            account: PayPal holds the money meanwhile and returns it after 30 days if nobody claims it. Point the receivers at a sandbox account of
+            your own (<code className="font-mono">PAYPAL_PAYOUT_RECEIVER_OVERRIDE</code>) to see items reach SUCCESS.
+            {demo && " In this public demo, unclaimed payouts are cancelled after about 20 minutes so the sandbox money goes back for the next visitor."}
           </p>
         )}
         {error && <p className="text-terracotta">{error}</p>}

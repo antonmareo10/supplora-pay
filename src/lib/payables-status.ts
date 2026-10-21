@@ -5,6 +5,7 @@
 import type { PayAction } from "@/lib/types";
 
 /** The single status a payable shows: payment state first, then the review outcome. */
+/** "sent" = PayPal processed the payout but it is UNCLAIMED: it waits until the supplier claims it. */
 export type PayableStatus = "paid" | "sent" | "paying" | "failed" | "held" | "disputed" | "pending";
 
 /** Logical display order of statuses (most-urgent first) for the default sort. */
@@ -12,7 +13,7 @@ export const STATUS_ORDER: PayableStatus[] = ["failed", "held", "disputed", "pen
 
 export const STATUS_LABEL: Record<PayableStatus, string> = {
   paid: "Paid",
-  sent: "Sent · unclaimed",
+  sent: "Sent · awaiting claim",
   paying: "Paying…",
   failed: "Payment failed",
   held: "Held",

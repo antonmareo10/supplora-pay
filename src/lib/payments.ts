@@ -3,7 +3,7 @@
 // the owner's Approve action.
 
 import { RESTAURANT, supplierById } from "@/data/seed";
-import { effective, isSettled } from "./ap";
+import { effective, isPaidOrSent } from "./ap";
 import { businessToday } from "./dates";
 import { fmt, fromDecimalString, pctOf } from "./money";
 import { cancelUnclaimedPayoutItem, createPayoutBatch, getPayoutBatch, PayPalError, type PayoutBatchResponse } from "./paypal";
@@ -94,7 +94,7 @@ export async function approvePayments(planId: string, docIds: string[]): Promise
       if (p.status !== "proposed" && p.status !== "failed") throw new PaymentError(`${p.invoiceNumber} is already ${p.status}.`, 409);
       const doc = s.documents.find((d) => d.id === docId);
       if (!doc || !doc.review) throw new PaymentError(`Invoice ${p.invoiceNumber} no longer exists.`, 409);
-      if (isSettled(doc)) throw new PaymentError(`${p.invoiceNumber} has already been paid.`, 409);
+      if (isPaidOrSent(doc)) throw new PaymentError(`${p.invoiceNumber} has already been sent to PayPal.`, 409);
       const e = effective(doc)!;
       if (e.action === "hold") throw new PaymentError(`${p.invoiceNumber} is on hold. Release it before paying.`, 409);
       const disc = doc.review.discount;
