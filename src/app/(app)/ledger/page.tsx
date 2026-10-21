@@ -12,7 +12,7 @@ import { fmt } from "@/lib/money";
 import { buildPayableRows } from "@/lib/payables-view";
 import { orderPaidCents } from "@/lib/settlement";
 import { readState } from "@/lib/state";
-import { updatedByLabel } from "@/lib/webhook-events";
+import { updatedByLabel, webhookSeenLabel } from "@/lib/webhook-events";
 
 export const metadata: Metadata = { title: "Ledger" };
 
@@ -156,6 +156,9 @@ export default async function LedgerPage() {
                       <td className="py-2.5 pl-2 pr-5 text-xs text-ink-2">
                         {updatedByLabel(o.updatedBy) ?? "—"}
                         {o.updatedBy?.at && <span className="block text-muted">{fmtDateTime(o.updatedBy.at)}</span>}
+                        {o.lastWebhook && o.updatedBy?.eventId !== o.lastWebhook.eventId && (
+                          <span className="block text-muted">{webhookSeenLabel(o.lastWebhook)} received</span>
+                        )}
                       </td>
                     </tr>
                   );

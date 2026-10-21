@@ -4,7 +4,7 @@ import { fmtDateTime } from "@/lib/dates";
 import { fmt } from "@/lib/money";
 import { orderPhase, planSettlement, scriptedDelivery } from "@/lib/settlement";
 import type { StoreOrder } from "@/lib/types";
-import { updatedByLabel } from "@/lib/webhook-events";
+import { updatedByLabel, webhookSeenLabel } from "@/lib/webhook-events";
 import { DeliveryActions } from "./client/DeliveryActions";
 import { IconExternal } from "./icons";
 import { cx, Mono, Pill, type Tone } from "./ui";
@@ -148,6 +148,7 @@ export function OrderCard({ order, settleEnabled = true }: { order: StoreOrder; 
         <p className="border-t border-line px-4 py-1.5 text-[11px] text-muted">
           Last PayPal status from: <span className="font-medium text-ink-2">{source}</span>
           {order.updatedBy?.at && ` · ${fmtDateTime(order.updatedBy.at)}`}
+          {order.lastWebhook && order.updatedBy?.eventId !== order.lastWebhook.eventId && ` · ${webhookSeenLabel(order.lastWebhook)} received`}
         </p>
       )}
       {order.error && <p className="border-t border-line px-4 py-2 text-xs text-terracotta">{order.error}</p>}

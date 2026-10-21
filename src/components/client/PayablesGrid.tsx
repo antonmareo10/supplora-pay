@@ -242,7 +242,12 @@ function PaypalCell(p: ICellRendererParams<PayableRow>) {
     <span className="flex h-full flex-col justify-center leading-tight">
       <code className="font-mono text-[12px] tracking-tight text-ink-2">{p.data.paypalBatchId}</code>
       {p.data.paypalItemId && <code className="font-mono text-[11px] tracking-tight text-muted">{p.data.paypalItemId}</code>}
-      {p.data.paypalUpdatedBy && <span className="text-[10.5px] text-muted">status via {p.data.paypalUpdatedBy}</span>}
+      {p.data.paypalUpdatedBy && (
+        <span className="text-[10.5px] text-muted" title={p.data.paypalWebhook ?? undefined}>
+          status via {p.data.paypalUpdatedBy}
+          {p.data.paypalWebhook && p.data.paypalUpdatedBy !== "webhook" && !p.data.paypalUpdatedBy.startsWith("webhook") ? " · webhook ✓" : ""}
+        </span>
+      )}
     </span>
   );
 }

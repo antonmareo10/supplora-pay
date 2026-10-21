@@ -12,6 +12,7 @@ import {
   itemToStatus,
   parseWebhookEvent,
   readWebhookHeaders,
+  statusMovesForward,
   updatedByLabel,
   verificationBody,
 } from "./webhook-events.ts";
@@ -178,6 +179,28 @@ test("authorization and capture webhooks update the order, by webhook", () => {
   assert.equal(s2.orders[0].authorization!.status, "VOIDED");
   assert.equal(s2.orders[0].releasedCents, 14496);
   assert.equal(s2.orders[0].capturedCents, 0);
+});
+
+test("late or out-of-order webhooks never move a status backwards", () => {
+  const s = state();
+  // The payout was already returned; an UNCLAIMED event delivered late is recorded as seen, not applied.
+  applyPayoutItem(s, s.batches[0], { payout_item_id: "ITEM1", transaction_status: "RETURNED", sender_item_id: "doc-01" }, { source: "reconcile", at: AT });
+  const late = applyWebhookEvent(s, event("PAYMENT.PAYOUTS-ITEM.UNCLAIMED", { payout_batch_id: "BATCH1", payout_item_id: "ITEM1", transaction_status: "UNCLAIMED", payout_item: { sender_item_id: "doc-01" } }, "WH-OLD"), AT);
+  assert.equal(late.changed, false);
+  assert.match(late.note, /older than the ledger's RETURNED \(kept\)/);
+  assert.equal(s.batches[0].items[0].transactionStatus, "RETURNED");
+  assert.equal(s.batches[0].items[0].lastWebhook?.eventId, "WH-OLD");
+  // An authorization's CREATED event arriving after its capture.
+  const s2 = state();
+  s2.orders[0].authorization!.status = "CAPTURED";
+  const created = applyWebhookEvent(s2, event("PAYMENT.AUTHORIZATION.CREATED", { id: "AUTH1AAAAAAA", status: "CREATED", supplementary_data: { related_ids: { order_id: "ORDER1AAAAAA" } } }), AT);
+  assert.equal(created.changed, false);
+  assert.equal(s2.orders[0].authorization!.status, "CAPTURED");
+  assert.equal(s2.orders[0].lastWebhook?.eventType, "PAYMENT.AUTHORIZATION.CREATED");
+  assert.ok(statusMovesForward("capture", "COMPLETED", "PARTIALLY_REFUNDED"));
+  assert.ok(!statusMovesForward("capture", "REFUNDED", "COMPLETED"));
+  assert.ok(statusMovesForward("item", "UNCLAIMED", "SUCCESS"));
+  assert.ok(!statusMovesForward("item", "SUCCESS", "UNCLAIMED"));
 });
 
 test("events about payments this ledger does not hold change nothing", () => {

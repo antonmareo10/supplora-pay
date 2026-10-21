@@ -10,7 +10,7 @@ import { supplierById } from "@/data/seed";
 import { effective } from "@/lib/ap";
 import { ACTION_LABEL, STATUS_LABEL, statusOf, type PayableStatus } from "@/lib/payables-status";
 import type { AppState, PayAction, Severity } from "@/lib/types";
-import { updatedByLabel } from "@/lib/webhook-events";
+import { updatedByLabel, webhookSeenLabel } from "@/lib/webhook-events";
 
 export type { PayableStatus } from "@/lib/payables-status";
 
@@ -41,6 +41,8 @@ export interface PayableRow {
   paypalItemId: string | null;
   /** Where the latest PayPal status came from: status poll, verified webhook or reconciliation. */
   paypalUpdatedBy: string | null;
+  /** A verified PayPal webhook about this payout arrived (whether or not it changed the status). */
+  paypalWebhook: string | null;
 }
 
 const SEVERITY_RANK: Record<Severity, number> = { high: 0, medium: 1, low: 2, opportunity: 3, info: 4 };
@@ -84,6 +86,7 @@ export function buildPayableRows(state: AppState): PayableRow[] {
       paypalBatchId: doc.payment.batchId ?? null,
       paypalItemId: doc.payment.payoutItemId ?? null,
       paypalUpdatedBy: updatedByLabel(doc.payment.updatedBy),
+      paypalWebhook: webhookSeenLabel(doc.payment.lastWebhook),
     });
   }
   return rows;

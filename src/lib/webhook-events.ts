@@ -9,7 +9,7 @@
 // Pure (no Node or Next APIs) so it can be unit-tested with Node's test runner.
 
 import { fmt, fromDecimalString } from "./money.ts";
-import type { AppState, AuditEntry, PaymentStatus, PayoutBatchRecord, PlannedPayment, StatusUpdate, StoreOrder } from "./types.ts";
+import type { AppState, AuditEntry, PaymentStatus, PayoutBatchRecord, PlannedPayment, StatusUpdate, StoreOrder, WebhookSeen } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Payout items
@@ -26,9 +26,27 @@ export function itemToStatus(s: string): { doc: PaymentStatus; plan: PlannedPaym
 }
 
 const ITEM_FAILURE_TEXT: Record<string, string> = {
-  RETURNED: "PayPal returned the payout: the supplier did not claim it within 30 days",
+  RETURNED: "PayPal returned the unclaimed payout to the restaurant's PayPal balance (cancelled by the sender, or not claimed within 30 days)",
   CANCELED: "the unclaimed payout was cancelled and the money returned to the restaurant's PayPal balance",
 };
+
+// Statuses only move forward. Webhooks can arrive late or out of order (an UNCLAIMED event after the
+// payout was already returned, an authorization's CREATED event after its capture): an older status
+// never overwrites a newer one.
+const ITEM_RANK: Record<string, number> = { NEW: 0, PENDING: 0, ONHOLD: 0, HELD: 0, UNCLAIMED: 1 };
+const itemRank = (s: string) => ITEM_RANK[s] ?? 2;
+const AUTH_RANK: Record<string, number> = { CREATED: 0, PENDING: 0, PARTIALLY_CAPTURED: 1 };
+const authRank = (s: string) => AUTH_RANK[s] ?? 2;
+const CAPTURE_RANK: Record<string, number> = { PENDING: 0, COMPLETED: 1, DECLINED: 1, FAILED: 1, DENIED: 1, PARTIALLY_REFUNDED: 2, REFUNDED: 3 };
+const captureRank = (s: string | undefined) => (s ? CAPTURE_RANK[s] ?? 1 : -1);
+
+/** Whether `next` may replace `current` (forward only; terminal statuses are final). */
+export function statusMovesForward(kind: "item" | "authorization" | "capture", current: string | undefined, next: string): boolean {
+  if (!current || current === next) return current !== next;
+  if (kind === "item") return itemRank(next) > itemRank(current) || (itemRank(next) === itemRank(current) && itemRank(current) < 2) || (itemRank(current) === 2 && ["REFUNDED", "REVERSED"].includes(next));
+  if (kind === "authorization") return authRank(next) > authRank(current) || (authRank(next) === authRank(current) && authRank(current) < 2);
+  return captureRank(next) > captureRank(current);
+}
 
 export interface PayoutItemUpdate {
   payout_item_id: string;
@@ -52,9 +70,9 @@ export function applyPayoutItem(s: AppState, batch: PayoutBatchRecord, it: Payou
   const before = item.transactionStatus;
   item.payoutItemId = it.payout_item_id;
   item.transactionId = it.transaction_id ?? item.transactionId;
+  if (!statusMovesForward("item", before, it.transaction_status)) return { changed: false, settled: false };
   item.transactionStatus = it.transaction_status;
   item.errorName = it.errors?.name;
-  if (before === it.transaction_status) return { changed: false, settled: false };
   item.updatedBy = by;
   const plan = s.plans.find((p) => p.id === batch.planId);
   const mapped = itemToStatus(it.transaction_status);
@@ -125,7 +143,7 @@ export function applyAuthorizationStatus(o: StoreOrder, auth: { id: string; stat
   if (!o.authorization) {
     if (auth.amountCents == null) return false;
     o.authorization = { id: auth.id, status: auth.status, amountCents: auth.amountCents, createdAt: by.at };
-  } else if (o.authorization.id !== auth.id || o.authorization.status === auth.status) {
+  } else if (o.authorization.id !== auth.id || !statusMovesForward("authorization", o.authorization.status, auth.status)) {
     return false;
   } else {
     o.authorization.status = auth.status;
@@ -141,10 +159,11 @@ export function applyAuthorizationStatus(o: StoreOrder, auth: { id: string; stat
 /** PayPal reports a capture (webhook or reconciliation). */
 export function applyCaptureStatus(o: StoreOrder, cap: { id: string; status: string; amountCents?: number; finalCapture?: boolean }, by: StatusUpdate): boolean {
   if (o.captureId && o.captureId !== cap.id) return false;
-  const changed = o.captureId !== cap.id || o.captureStatus !== cap.status || (cap.amountCents != null && o.capturedCents == null);
+  const forward = statusMovesForward("capture", o.captureStatus, cap.status);
+  const changed = o.captureId !== cap.id || forward || (cap.amountCents != null && o.capturedCents == null);
   if (!changed) return false;
   o.captureId = cap.id;
-  o.captureStatus = cap.status;
+  if (forward) o.captureStatus = cap.status;
   if (o.intent === "AUTHORIZE") {
     if (o.capturedCents == null && cap.amountCents != null) o.capturedCents = cap.amountCents;
     if (o.authorization && cap.finalCapture && ["COMPLETED", "PENDING"].includes(cap.status)) {
@@ -274,6 +293,7 @@ export function eventResourceIds(e: PayPalWebhookEvent): string[] {
  */
 export function applyWebhookEvent(s: AppState, e: PayPalWebhookEvent, at: string): Applied & { note: string } {
   const by: StatusUpdate = { source: "webhook", at, eventId: e.id, eventType: e.event_type };
+  const seen: WebhookSeen = { eventId: e.id, eventType: e.event_type, at };
   const r = e.resource;
   const verified = `Verified PayPal webhook ${e.event_type} (${e.id})`;
 
@@ -284,14 +304,22 @@ export function applyWebhookEvent(s: AppState, e: PayPalWebhookEvent, at: string
     const status = typeof r.transaction_status === "string" ? r.transaction_status : e.event_type.split(".").pop()!;
     if (!batch || !payoutItemId) return { changed: false, settled: false, note: `${verified}: no matching payout batch in this ledger` };
     const item = r.payout_item as { sender_item_id?: unknown } | undefined;
+    const senderItemId = typeof item?.sender_item_id === "string" ? item.sender_item_id : undefined;
     const errors = r.errors as { name?: string; message?: string } | undefined;
-    const applied = applyPayoutItem(
-      s,
-      batch,
-      { payout_item_id: payoutItemId, transaction_id: str(r.transaction_id), transaction_status: status, sender_item_id: typeof item?.sender_item_id === "string" ? item.sender_item_id : undefined, errors },
-      by,
-    );
-    return { ...applied, note: applied.changed ? `${verified}: payout item ${payoutItemId} is ${status}` : `${verified}: payout item ${payoutItemId} already ${status}` };
+    const ledgerItem = batch.items.find((i) => (senderItemId && i.senderItemId === senderItemId) || i.payoutItemId === payoutItemId);
+    const before = ledgerItem?.transactionStatus;
+    const applied = applyPayoutItem(s, batch, { payout_item_id: payoutItemId, transaction_id: str(r.transaction_id), transaction_status: status, sender_item_id: senderItemId, errors }, by);
+    if (ledgerItem) {
+      ledgerItem.lastWebhook = seen;
+      const doc = s.documents.find((d) => d.id === ledgerItem.docId);
+      if (doc && doc.payment.batchId === batch.id) doc.payment.lastWebhook = seen;
+    }
+    const note = applied.changed
+      ? `${verified}: payout item ${payoutItemId} is ${status}`
+      : before && before !== status
+        ? `${verified}: payout item ${payoutItemId} reported ${status}, older than the ledger's ${before} (kept)`
+        : `${verified}: payout item ${payoutItemId} is ${status}, as in the ledger`;
+    return { ...applied, note };
   }
 
   const { orderId, authorizationId } = relatedIds(r);
@@ -305,10 +333,11 @@ export function applyWebhookEvent(s: AppState, e: PayPalWebhookEvent, at: string
     if (!order || !id || !status) return { changed: false, settled: false, note: `${verified}: no matching order in this ledger` };
     const amount = cents((r.amount as { value?: unknown } | undefined)?.value);
     const changed = applyAuthorizationStatus(order, { id, status, amountCents: amount }, by);
+    order.lastWebhook = seen;
     return {
       changed,
       settled: false,
-      note: `${verified}: authorization ${id} is ${status}`,
+      note: `${verified}: authorization ${id} is ${status}${changed ? "" : `; the ledger already has ${order.authorization?.status}`}`,
       audit: changed
         ? { actor: "system", message: `Order ${order.id}: authorization ${id} is ${status}${SOURCE_SUFFIX.webhook}.`, ref: { orderId: order.id }, amountCents: order.authorization?.amountCents }
         : undefined,
@@ -321,6 +350,7 @@ export function applyWebhookEvent(s: AppState, e: PayPalWebhookEvent, at: string
     const amount = cents((r.amount as { value?: unknown } | undefined)?.value);
     if (!order || amount == null) return { changed: false, settled: false, note: `${verified}: no matching capture in this ledger` };
     applyRefund(order, amount, by);
+    order.lastWebhook = seen;
     return {
       changed: true,
       settled: false,
@@ -335,15 +365,21 @@ export function applyWebhookEvent(s: AppState, e: PayPalWebhookEvent, at: string
     if (!order || !id || !status) return { changed: false, settled: false, note: `${verified}: no matching order in this ledger` };
     const amount = cents((r.amount as { value?: unknown } | undefined)?.value);
     const changed = applyCaptureStatus(order, { id, status, amountCents: amount, finalCapture: r.final_capture === true }, by);
+    order.lastWebhook = seen;
     return {
       changed,
       settled: false,
-      note: `${verified}: capture ${id} is ${status}`,
+      note: `${verified}: capture ${id} is ${status}${changed ? "" : ", as in the ledger"}`,
       audit: changed ? { actor: "system", message: `Order ${order.id}: capture ${id} is ${status}${SOURCE_SUFFIX.webhook}.`, ref: { orderId: order.id }, amountCents: amount } : undefined,
     };
   }
 
   return { changed: false, settled: false, note: `${verified}: event type not used by Supplora Pay` };
+}
+
+/** "Verified webhook PAYMENT.X received" line for the ledger, when one arrived. */
+export function webhookSeenLabel(w: WebhookSeen | undefined): string | null {
+  return w ? `verified webhook ${w.eventType}` : null;
 }
 
 /** Short label for where a status came from, for the ledger. */

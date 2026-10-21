@@ -222,6 +222,8 @@ export interface DocumentRecord {
     error?: string;
     /** Where the last PayPal status came from (status poll, verified webhook, or reconciliation). */
     updatedBy?: StatusUpdate;
+    /** The latest verified PayPal webhook about this payment, whether or not it changed the status. */
+    lastWebhook?: WebhookSeen;
   };
   dispute?: {
     status: "drafted" | "sent" | "resolved";
@@ -296,7 +298,15 @@ export interface PayoutBatchRecord {
     transactionStatus: string;
     errorName?: string;
     updatedBy?: StatusUpdate;
+    /** The latest verified PayPal webhook about this payment, whether or not it changed the status. */
+    lastWebhook?: WebhookSeen;
   }[];
+}
+
+export interface WebhookSeen {
+  eventId: string;
+  eventType: string;
+  at: string;
 }
 
 /** Where the ledger's latest PayPal status for a payment came from. */
@@ -359,6 +369,8 @@ export interface StoreOrder {
   error?: string;
   received?: boolean;
   updatedBy?: StatusUpdate;
+  /** The latest verified PayPal webhook about this order, whether or not it changed the status. */
+  lastWebhook?: WebhookSeen;
 }
 
 export interface OrderAuthorization {
