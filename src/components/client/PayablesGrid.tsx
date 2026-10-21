@@ -45,9 +45,10 @@ import { PALETTE, SEVERITY_DOT, STATUS_PILL, supploraTheme } from "./ag-theme";
 ChartsModuleRegistry.registerModules([ChartsCommunityModule]);
 
 // Room for a two-line supplier name or finding (long ones are clamped; the tooltip has them all),
-// and slightly tighter cell padding so every column fits a 1440 px screen, PayPal ids included.
+// and tighter cell padding so every column, PayPal ids included, fits a 1280 px laptop without a
+// horizontal scroll (the fixed widths below are measured from each column's widest content).
 // Set on the theme, not the grid, so plain text cells stay vertically centred too.
-const payablesTheme = supploraTheme.withParams({ rowHeight: 64, cellHorizontalPadding: 12 });
+const payablesTheme = supploraTheme.withParams({ rowHeight: 64, cellHorizontalPadding: 10 });
 
 type GroupKey = "none" | "status" | "supplier";
 
@@ -124,7 +125,8 @@ function StatusCell(p: ICellRendererParams<PayableRow>) {
   const [pill, detail] = STATUS_LABEL[s].split(" · ");
   return (
     <span className="flex h-full flex-col items-start justify-center gap-0.5 leading-tight">
-      <span className={cx("inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium", STATUS_PILL[s])}>{pill}</span>
+      {/* A long label ("Payment failed") wraps inside the pill rather than being cut by the column edge. */}
+      <span className={cx("inline-flex max-w-full items-center gap-1 rounded-[10px] border px-2.5 py-0.5 text-xs font-medium", STATUS_PILL[s])}>{pill}</span>
       {detail && <span className="text-[10.5px] text-[#8a5a0c]">{detail}</span>}
       {p.data.ownerDecision && <span className="text-[10.5px] text-muted">owner changed it to {p.data.recommendationLabel.toLowerCase()}</span>}
     </span>
@@ -215,7 +217,7 @@ function WithheldCell(p: ICellRendererParams<PayableRow, number, GridContext>) {
   return (
     <span className="flex h-full flex-col items-end justify-center gap-1 leading-tight">
       <span className="num font-medium text-terracotta">{fmt(v)}</span>
-      <span className="h-1 w-16 overflow-hidden rounded-full bg-terracotta-soft" aria-hidden>
+      <span className="h-1 w-14 overflow-hidden rounded-full bg-terracotta-soft" aria-hidden>
         <span className="block h-full rounded-full bg-terracotta/70" style={{ width: `${pct}%` }} />
       </span>
     </span>
@@ -238,14 +240,20 @@ function SentCell(p: ICellRendererParams<PayableRow, number>) {
 function PaypalCell(p: ICellRendererParams<PayableRow>) {
   if (p.node.rowPinned || !p.data) return null;
   if (!p.data.paypalBatchId) return <span className="text-muted">—</span>;
+  const by = p.data.paypalUpdatedBy;
+  // Where the latest status came from, short enough to fit the column in two lines at most; the full
+  // source (e.g. the webhook's event type) is in the tooltip.
+  const viaWebhook = !!by?.startsWith("webhook");
+  const alsoWebhook = !!p.data.paypalWebhook && !viaWebhook;
+  const title = by ? [`Latest PayPal status via ${by}`, p.data.paypalWebhook && `${p.data.paypalWebhook} received`].filter(Boolean).join("; ") : undefined;
   return (
     <span className="flex h-full flex-col justify-center leading-tight">
-      <code className="font-mono text-[12px] tracking-tight text-ink-2">{p.data.paypalBatchId}</code>
+      <code className="font-mono text-[11.5px] tracking-tight text-ink-2">{p.data.paypalBatchId}</code>
       {p.data.paypalItemId && <code className="font-mono text-[11px] tracking-tight text-muted">{p.data.paypalItemId}</code>}
-      {p.data.paypalUpdatedBy && (
-        <span className="text-[10.5px] text-muted" title={p.data.paypalWebhook ?? undefined}>
-          status via {p.data.paypalUpdatedBy}
-          {p.data.paypalWebhook && p.data.paypalUpdatedBy !== "webhook" && !p.data.paypalUpdatedBy.startsWith("webhook") ? " · webhook ✓" : ""}
+      {by && (
+        <span className="line-clamp-2 whitespace-normal text-[10.5px] text-muted" title={title}>
+          via {viaWebhook ? "webhook ✓" : by}
+          {alsoWebhook ? " · webhook ✓" : ""}
         </span>
       )}
     </span>
@@ -383,7 +391,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         cellRenderer: SupplierCell,
         pinned: "left",
         lockPinned: true,
-        width: narrow ? 148 : 180,
+        width: narrow ? 148 : 164,
         // Search and filter by supplier, category or invoice number.
         getQuickFilterText: (p) => (p.data ? `${p.data.supplier} ${p.data.category} ${p.data.invoiceNumber}` : ""),
         filterValueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? `${p.data.supplier} ${p.data.invoiceNumber}` : ""),
@@ -393,7 +401,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         field: "status",
         headerName: "Status",
         cellRenderer: StatusCell,
-        width: 116,
+        width: 108,
         enableCellChangeFlash: true,
         comparator: (a: PayableStatus, b: PayableStatus) => STATUS_ORDER.indexOf(a) - STATUS_ORDER.indexOf(b),
         filterValueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? STATUS_LABEL[p.data.status] : ""),
@@ -404,14 +412,14 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         headerName: "Amounts (EUR, VAT incl.)",
         marryChildren: true,
         children: [
-          { field: "invoiceCents", headerName: "Invoiced", type: "rightAligned", cellClass: "num", width: 92, valueFormatter: moneyFmt, filter: "agNumberColumnFilter", filterValueGetter: euros("invoiceCents") },
+          { field: "invoiceCents", headerName: "Invoiced", type: "rightAligned", cellClass: "num", width: 88, valueFormatter: moneyFmt, filter: "agNumberColumnFilter", filterValueGetter: euros("invoiceCents") },
           {
             field: "withheldCents",
             headerName: "Withheld",
             headerTooltip: "Withheld until the supplier sends a credit note, or the whole invoice when it is held (e.g. a duplicate)",
             type: "rightAligned",
             cellRenderer: WithheldCell,
-            width: 100,
+            width: 78,
             valueFormatter: moneyOrDash,
             filter: "agNumberColumnFilter",
             filterValueGetter: euros("withheldCents"),
@@ -422,7 +430,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
             headerTooltip: "Sent through PayPal Payouts: claimed by the supplier, or awaiting their claim. Includes any early-payment discount taken.",
             type: "rightAligned",
             cellRenderer: SentCell,
-            width: 112,
+            width: 108,
             enableCellChangeFlash: true,
             valueFormatter: moneyOrDash,
             filter: "agNumberColumnFilter",
@@ -443,8 +451,8 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
             cellRenderer: FindingCell,
             tooltipField: "finding",
             tooltipComponent: FindingsTooltip,
-            flex: 1,
-            minWidth: 180,
+            flex: 2,
+            minWidth: 150,
             filter: "agTextColumnFilter",
           },
           // The status pill already shows the outcome; kept for the CSV export and search.
@@ -454,7 +462,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
             headerName: "Due",
             cellRenderer: dueCell,
             valueFormatter: dueFmt,
-            width: 96,
+            width: 92,
             // The date picker does not fit a floating filter this narrow; the header menu has it.
             floatingFilter: false,
             filter: "agDateColumnFilter",
@@ -477,12 +485,14 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
           { field: "invoiceNumber", headerName: "Invoice no.", cellRenderer: InvoiceCell, width: 136, hide: true, filter: "agTextColumnFilter" },
           {
             headerName: "Batch · item",
-            headerTooltip: "PayPal payout batch id and payout item id",
+            headerTooltip: "PayPal payout batch id and payout item id, and where the latest status came from (status poll, verified webhook or reconciliation)",
             colId: "paypal",
             cellRenderer: PaypalCell,
             enableCellChangeFlash: true,
             valueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? [p.data.paypalBatchId, p.data.paypalItemId].filter(Boolean).join(" ") : ""),
-            width: 124,
+            // Flexes with the finding column: never narrower than a batch id, wider when there is room.
+            minWidth: 114,
+            flex: 1,
             hide: !anySent,
             filter: "agTextColumnFilter",
           },
