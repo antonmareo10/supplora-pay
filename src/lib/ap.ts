@@ -1,5 +1,6 @@
 // Accounts-payable helpers shared by the server and the UI (no Node APIs here).
 
+import { orderHeldCents, orderPaidCents } from "./settlement.ts";
 import type { AppState, DocumentRecord, FindingKind, PayAction } from "./types";
 
 export const OVERCHARGE_KINDS: FindingKind[] = ["price_increase", "quantity_mismatch", "not_delivered", "arithmetic", "totals_mismatch"];
@@ -76,8 +77,13 @@ export interface LedgerStats {
   duplicatesBlockedCents: number;
   discountsCapturedCents: number;
   discountsAvailableCents: number;
+  /** Captured on PayPal for restock orders (what arrived, or the whole order when bought at checkout). */
   ordersCents: number;
   ordersCount: number;
+  /** Authorized on the card, waiting for the delivery note. */
+  ordersHeldCents: number;
+  /** Authorized but released because it never arrived. */
+  ordersReleasedCents: number;
   /** Kept back or saved: overcharges withheld + duplicates held + discounts captured. */
   protectedCents: number;
 }
@@ -101,6 +107,8 @@ export function ledgerStats(state: AppState, today: string): LedgerStats {
     discountsAvailableCents: 0,
     ordersCents: 0,
     ordersCount: 0,
+    ordersHeldCents: 0,
+    ordersReleasedCents: 0,
     protectedCents: 0,
   };
   for (const doc of state.documents) {
@@ -136,10 +144,13 @@ export function ledgerStats(state: AppState, today: string): LedgerStats {
     }
   }
   for (const o of state.orders) {
-    if (o.status === "COMPLETED") {
-      s.ordersCents += o.totalCents;
+    const paid = orderPaidCents(o);
+    if (paid > 0) {
+      s.ordersCents += paid;
       s.ordersCount++;
     }
+    s.ordersHeldCents += orderHeldCents(o);
+    s.ordersReleasedCents += o.intent === "AUTHORIZE" ? (o.releasedCents ?? 0) : 0;
   }
   s.protectedCents = s.overchargesCaughtCents + s.duplicatesBlockedCents + s.discountsCapturedCents;
   return s;

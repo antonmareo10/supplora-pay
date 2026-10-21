@@ -34,7 +34,8 @@ export function ProposalApproval({ proposal, cardLabel }: { proposal: RestockPro
           <IconShield size={20} className="mt-0.5 shrink-0 text-ledger" />
           <p className="text-sm text-ink-2">
             <strong className="text-ink">The agent created the checkouts but cannot pay.</strong> Approving confirms each PayPal order with the
-            restaurant&apos;s card on file ({cardLabel ?? "a sandbox test card, stored in PayPal Vault on first use"}) and captures the payment.
+            restaurant&apos;s card on file ({cardLabel ?? "a sandbox test card, stored in PayPal Vault on first use"}) and authorizes it: the money is
+            held, not taken. PayPal captures only what the signed delivery note confirms and releases the rest.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
@@ -43,7 +44,7 @@ export function ProposalApproval({ proposal, cardLabel }: { proposal: RestockPro
           </button>
           <button type="button" onClick={() => act("approve")} disabled={!!busy} className={buttonClass("primary", "lg")}>
             <IconCard size={16} />
-            {busy === "approve" ? "Paying with PayPal…" : proposal.status === "failed" ? `Retry payment · ${fmt(proposal.totalCents)}` : `Approve & pay ${fmt(proposal.totalCents)}`}
+            {busy === "approve" ? "Authorizing with PayPal…" : proposal.status === "failed" ? `Retry · ${fmt(proposal.totalCents)}` : `Approve & authorize ${fmt(proposal.totalCents)}`}
           </button>
         </div>
       </div>

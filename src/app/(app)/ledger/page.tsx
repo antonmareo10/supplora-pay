@@ -10,7 +10,9 @@ import { ledgerStats } from "@/lib/ap";
 import { businessToday, fmtDateTime } from "@/lib/dates";
 import { fmt } from "@/lib/money";
 import { buildPayableRows } from "@/lib/payables-view";
+import { orderPaidCents } from "@/lib/settlement";
 import { readState } from "@/lib/state";
+import { updatedByLabel } from "@/lib/webhook-events";
 
 export const metadata: Metadata = { title: "Ledger" };
 
@@ -71,9 +73,13 @@ export default async function LedgerPage() {
             {s.discountsAvailableCents > 0 && <dd className="text-xs text-muted">{fmt(s.discountsAvailableCents)} still available</dd>}
           </div>
           <div>
-            <dt className="text-sm text-muted">Restock orders paid</dt>
+            <dt className="text-sm text-muted">Restock orders captured</dt>
             <dd className="num text-xl font-semibold text-ink">{fmt(s.ordersCents)}</dd>
-            <dd className="text-xs text-muted">{s.ordersCount} PayPal order{s.ordersCount === 1 ? "" : "s"}</dd>
+            <dd className="text-xs text-muted">
+              {s.ordersCount} PayPal order{s.ordersCount === 1 ? "" : "s"}
+              {s.ordersReleasedCents > 0 && ` · ${fmt(s.ordersReleasedCents)} released (did not arrive)`}
+              {s.ordersHeldCents > 0 && ` · ${fmt(s.ordersHeldCents)} authorized, awaiting delivery`}
+            </dd>
           </div>
         </dl>
       </Card>
@@ -103,35 +109,53 @@ export default async function LedgerPage() {
 
       {state.orders.length > 0 && (
         <section aria-labelledby="orders">
-          <SectionTitle id="orders" kicker="PayPal Orders v2" title="Store orders" />
+          <SectionTitle
+            id="orders"
+            kicker="PayPal Orders v2 · Payments v2"
+            title="Store orders"
+            aside={<span className="text-xs text-muted">Agent restocks: authorized at approval, captured for what the delivery note confirms</span>}
+          />
           <Card className="table-wrap">
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[900px] text-sm">
               <thead>
                 <tr className="border-b border-line bg-paper/60 text-left text-[11px] uppercase tracking-wider text-muted">
                   <th scope="col" className="py-2.5 pl-5 pr-2 font-semibold">Store</th>
-                  <th scope="col" className="px-2 py-2.5 font-semibold">Created by</th>
-                  <th scope="col" className="px-2 py-2.5 font-semibold">Order · capture</th>
-                  <th scope="col" className="px-2 py-2.5 text-right font-semibold">Total</th>
-                  <th scope="col" className="py-2.5 pl-2 pr-5 text-right font-semibold">Status</th>
+                  <th scope="col" className="px-2 py-2.5 font-semibold">PayPal ids</th>
+                  <th scope="col" className="px-2 py-2.5 text-right font-semibold">Authorized</th>
+                  <th scope="col" className="px-2 py-2.5 text-right font-semibold">Captured</th>
+                  <th scope="col" className="px-2 py-2.5 text-right font-semibold">Released</th>
+                  <th scope="col" className="px-2 py-2.5 font-semibold">Status</th>
+                  <th scope="col" className="py-2.5 pl-2 pr-5 font-semibold">Last PayPal update</th>
                 </tr>
               </thead>
               <tbody>
                 {[...state.orders].reverse().map((o) => {
                   const st = orderStatus(o);
+                  const authorize = o.intent === "AUTHORIZE";
+                  const paid = orderPaidCents(o);
                   return (
-                    <tr key={o.id} className="border-b border-line last:border-0">
-                      <td className="py-2.5 pl-5 pr-2 font-medium">{supplierById(o.supplierId)?.name}</td>
-                      <td className="px-2 py-2.5 text-ink-2">
-                        {o.source === "agent" ? "Purchasing agent" : "Owner"}
-                        <span className="block text-xs text-muted">{fmtDateTime(o.createdAt)}</span>
+                    <tr key={o.id} className="border-b border-line align-top last:border-0">
+                      <td className="py-2.5 pl-5 pr-2">
+                        <span className="font-medium">{supplierById(o.supplierId)?.name}</span>
+                        <span className="block text-xs text-muted">
+                          {o.source === "agent" ? "Purchasing agent" : "Owner"} · {fmtDateTime(o.createdAt)}
+                        </span>
                       </td>
                       <td className="px-2 py-2.5">
                         <Mono>{o.id}</Mono>
-                        {o.captureId && <Mono className="block text-muted">{o.captureId}</Mono>}
+                        {o.authorization && <Mono className="block text-muted">auth {o.authorization.id}</Mono>}
+                        {o.captureId && <Mono className="block text-muted">capture {o.captureId}</Mono>}
+                        {o.delivery && <span className="block text-xs text-muted">delivery note {o.delivery.noteNumber}</span>}
                       </td>
-                      <td className="num px-2 py-2.5 text-right">{fmt(o.totalCents)}</td>
-                      <td className="py-2.5 pl-2 pr-5 text-right">
-                        <Pill tone={st.tone}>{o.status}</Pill>
+                      <td className="num px-2 py-2.5 text-right">{authorize ? fmt(o.authorization?.amountCents ?? null) : "—"}</td>
+                      <td className="num px-2 py-2.5 text-right font-medium">{paid > 0 ? fmt(paid) : authorize && o.capturedCents === 0 ? fmt(0) : "—"}</td>
+                      <td className="num px-2 py-2.5 text-right text-ink-2">{authorize && o.releasedCents != null ? fmt(o.releasedCents) : "—"}</td>
+                      <td className="px-2 py-2.5">
+                        <Pill tone={st.tone}>{st.label}</Pill>
+                      </td>
+                      <td className="py-2.5 pl-2 pr-5 text-xs text-ink-2">
+                        {updatedByLabel(o.updatedBy) ?? "—"}
+                        {o.updatedBy?.at && <span className="block text-muted">{fmtDateTime(o.updatedBy.at)}</span>}
                       </td>
                     </tr>
                   );

@@ -10,8 +10,9 @@ import { sweepDemoPayouts, type SweepDeps, type SweepOptions, type SweepResult }
 import { cancelUnclaimedPayoutItem, createPayoutBatch, getPayoutBatch, paypalConfigured, PayPalError, type PayoutBatchResponse } from "./paypal";
 import { recheckAll } from "./review";
 import { currentStateKey, demoMode, runWithStateKey } from "./session";
-import { auditEntry, forgetDemoPayout, listDemoPayouts, readState, registerDemoPayout, updateState } from "./state";
-import type { AppState, PaymentStatus, PayoutBatchRecord, PlannedPayment } from "./types";
+import { auditEntry, forgetDemoPayout, indexPayPalResources, listDemoPayouts, readState, registerDemoPayout, updateState } from "./state";
+import type { AppState, PayoutBatchRecord, PlannedPayment, StatusUpdate } from "./types";
+import { applyPayoutItem } from "./webhook-events";
 
 export class PaymentError extends Error {
   constructor(
@@ -196,6 +197,7 @@ export async function approvePayments(planId: string, docIds: string[]): Promise
   // 3. Record the batch (and, in the public demo, register it for housekeeping right away, so its
   // money comes back even if the visitor closes the tab before the batch is ever polled).
   const batchId = response.batch_header.payout_batch_id;
+  await indexPayPalResources([batchId]);
   if (demo) {
     await registerDemoPayout({ batchId, key, at: Date.now(), cents: locked.total }).catch((err) =>
       console.error("[demo housekeeping] could not register payout batch", batchId, err instanceof Error ? err.message : err),
@@ -232,16 +234,6 @@ export async function approvePayments(planId: string, docIds: string[]): Promise
 }
 
 const TERMINAL_BATCH = ["SUCCESS", "DENIED", "CANCELED", "FAILED"];
-const PAID_ITEM = ["SUCCESS"];
-const SENT_ITEM = ["UNCLAIMED"];
-const FAILED_ITEM = ["FAILED", "RETURNED", "BLOCKED", "REFUNDED", "REVERSED", "DENIED"];
-
-function itemToStatus(s: string): { doc: PaymentStatus; plan: PlannedPayment["status"] } {
-  if (PAID_ITEM.includes(s)) return { doc: "paid", plan: "paid" };
-  if (SENT_ITEM.includes(s)) return { doc: "unclaimed", plan: "unclaimed" };
-  if (FAILED_ITEM.includes(s)) return { doc: "failed", plan: "failed" };
-  return { doc: "processing", plan: "processing" };
-}
 
 const inflight = new Map<string, Promise<PayoutBatchRecord>>();
 
@@ -257,71 +249,32 @@ export async function syncBatch(batchId: string): Promise<PayoutBatchRecord> {
   if (running) return running;
   const job = (async () => {
     const res = await getPayoutBatch(batchId, { planId: current.planId, batchId });
-    return updateState((s) => applyBatch(s, batchId, res));
+    return updateState((s) => applyBatch(s, batchId, res, { source: "poll", at: new Date().toISOString() }));
   })().finally(() => inflight.delete(batchId));
   inflight.set(batchId, job);
   return job;
 }
 
-function applyBatch(s: AppState, batchId: string, res: PayoutBatchResponse): PayoutBatchRecord {
+/**
+ * Applies a payout batch as PayPal reports it (status poll or reconciliation) to the ledger: the
+ * batch header, then each item through the same code the verified webhooks use.
+ */
+export function applyBatch(s: AppState, batchId: string, res: PayoutBatchResponse, by: StatusUpdate): PayoutBatchRecord {
   const batch = s.batches.find((b) => b.id === batchId)!;
-  const plan = s.plans.find((p) => p.id === batch.planId);
   batch.status = res.batch_header.batch_status;
   batch.lastPolledAt = new Date().toISOString();
   if (res.batch_header.fees?.value) batch.feesCents = fromDecimalString(res.batch_header.fees.value);
   if (res.batch_header.time_completed) batch.completedAt = res.batch_header.time_completed;
   let settledSomething = false;
   for (const it of res.items ?? []) {
-    const item = batch.items.find((i) => i.senderItemId === it.payout_item.sender_item_id);
-    if (!item) continue;
-    const before = item.transactionStatus;
-    item.payoutItemId = it.payout_item_id;
-    item.transactionId = it.transaction_id ?? item.transactionId;
-    item.transactionStatus = it.transaction_status;
-    item.errorName = it.errors?.name;
-    if (before === it.transaction_status) continue;
-    const mapped = itemToStatus(it.transaction_status);
-    const doc = s.documents.find((d) => d.id === item.docId);
-    if (doc) {
-      doc.payment = {
-        ...doc.payment,
-        status: mapped.doc,
-        payoutItemId: it.payout_item_id,
-        transactionId: it.transaction_id,
-        at: new Date().toISOString(),
-        error: mapped.doc === "failed" ? it.errors?.message ?? it.transaction_status : undefined,
-      };
-      if (mapped.doc === "failed") doc.payment = { status: "failed", error: doc.payment.error };
-    }
-    const p = plan?.payments.find((x) => x.docId === item.docId);
-    if (p) {
-      p.status = mapped.plan;
-      p.payoutItemId = it.payout_item_id;
-    }
-    if (mapped.doc !== "processing") {
-      settledSomething = true;
-      const supplier = p?.supplierName ?? item.receiver;
-      const detail =
-        it.transaction_status === "UNCLAIMED"
-          ? " — sent; the receiver has no PayPal account yet, so PayPal holds the funds until they claim them (returned after 30 days)"
-          : it.transaction_status === "SUCCESS"
-            ? " — delivered to the supplier's PayPal account"
-            : ` — ${it.errors?.message ?? "not delivered"}`;
-      s.audit.push(
-        auditEntry({
-          actor: "system",
-          message: `Payout to ${supplier} ${fmt(item.amountCents)}: ${it.transaction_status}${detail}.`,
-          ref: { batchId, docId: item.docId, planId: batch.planId },
-          amountCents: item.amountCents,
-        }),
-      );
-    }
-  }
-  // Recompute the plan's status from its payments: a late failure (item FAILED during sync) must
-  // reopen the plan so the owner can retry that invoice, instead of leaving it stranded on a plan
-  // still marked "completed" (which approvePayments refuses).
-  if (plan) {
-    plan.status = plan.payments.some((p) => p.status === "proposed" || p.status === "failed") ? "partially_paid" : "completed";
+    const applied = applyPayoutItem(
+      s,
+      batch,
+      { payout_item_id: it.payout_item_id, transaction_id: it.transaction_id, transaction_status: it.transaction_status, sender_item_id: it.payout_item.sender_item_id, errors: it.errors },
+      by,
+    );
+    if (applied.audit) s.audit.push(auditEntry(applied.audit));
+    settledSomething ||= applied.settled;
   }
   if (settledSomething) recheckAll(s);
   return batch;

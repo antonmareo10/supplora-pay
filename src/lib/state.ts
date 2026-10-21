@@ -198,6 +198,14 @@ export async function updateState<T>(fn: (state: AppState) => T): Promise<T> {
   });
 }
 
+/** Whether a state key has a stored session (webhooks must not create sessions for unknown keys). */
+export async function stateExists(key: string): Promise<boolean> {
+  const backend = stateBackend(key);
+  if (backend === "file") return true;
+  if (backend === "memory") return !!slots.get(key)?.state;
+  return ((await redis(["EXISTS", redisKey(key)])) as number) === 1;
+}
+
 export async function resetState(): Promise<void> {
   const key = await currentStateKey();
   const slot = slotFor(key);
@@ -244,6 +252,75 @@ export async function listDemoPayouts(): Promise<DemoPayoutEntry[]> {
 export async function forgetDemoPayout(batchId: string): Promise<void> {
   if (redisConfig()) await redis(["HDEL", REGISTRY_KEY, batchId]);
   else memoryRegistry.delete(batchId);
+}
+
+// ---------------------------------------------------------------------------
+// PayPal webhooks: which session owns a PayPal resource (payout batch, order, authorization,
+// capture), so a verified event updates the right visitor's ledger. Same backend as the sessions.
+// Also the processed-event set that makes webhook handling idempotent (PayPal retries deliveries).
+
+const RESOURCE_KEY = "supplora-pay:paypal-resources";
+const EVENTS_KEY = "supplora-pay:webhook-events";
+const EVENT_TTL_S = 7 * 24 * 60 * 60;
+const MAX_MEMORY_RESOURCES = 20_000;
+const gx = globalThis as typeof globalThis & { __supploraResources?: Map<string, string>; __supploraEvents?: Map<string, number> };
+const memoryResources: Map<string, string> = (gx.__supploraResources ??= new Map());
+const memoryEvents: Map<string, number> = (gx.__supploraEvents ??= new Map());
+
+/** Remember that these PayPal ids belong to the current session. Never throws. */
+export async function indexPayPalResources(ids: (string | undefined | null)[]): Promise<void> {
+  const list = ids.filter((x): x is string => !!x);
+  if (!list.length) return;
+  try {
+    const key = await currentStateKey();
+    if (redisConfig()) {
+      await redis(["HSET", RESOURCE_KEY, ...list.flatMap((id) => [id, key])]);
+      await redis(["EXPIRE", RESOURCE_KEY, String(REGISTRY_TTL_S)]);
+      return;
+    }
+    for (const id of list) memoryResources.set(id, key);
+    while (memoryResources.size > MAX_MEMORY_RESOURCES) memoryResources.delete(memoryResources.keys().next().value!);
+  } catch (err) {
+    console.error("[webhooks] could not index PayPal resources:", err instanceof Error ? err.message : err);
+  }
+}
+
+/** The session that owns the first of these PayPal ids we know, or null. */
+export async function sessionForPayPalResources(ids: string[]): Promise<string | null> {
+  if (!ids.length) return null;
+  if (redisConfig()) {
+    const found = ((await redis(["HMGET", RESOURCE_KEY, ...ids])) as (string | null)[] | null) ?? [];
+    const hit = found.find((v) => !!v);
+    if (hit) return hit;
+    // Payout batches sent before the index existed are still in the demo payout registry.
+    for (const e of await listDemoPayouts()) if (ids.includes(e.batchId)) return e.key;
+    return null;
+  }
+  for (const id of ids) {
+    const key = memoryResources.get(id);
+    if (key) return key;
+  }
+  for (const e of memoryRegistry.values()) if (ids.includes(e.batchId)) return e.key;
+  return null;
+}
+
+/** Claim a webhook event id; false when it was already processed (PayPal retries and duplicates). */
+export async function claimWebhookEvent(eventId: string): Promise<boolean> {
+  if (redisConfig()) {
+    const res = await redis(["SET", `${EVENTS_KEY}:${eventId}`, "1", "NX", "EX", String(EVENT_TTL_S)]);
+    return res === "OK";
+  }
+  const now = Date.now();
+  for (const [id, at] of memoryEvents) if (now - at > EVENT_TTL_S * 1000) memoryEvents.delete(id);
+  if (memoryEvents.has(eventId)) return false;
+  memoryEvents.set(eventId, now);
+  return true;
+}
+
+/** Processing failed after the claim: let PayPal's retry try again. */
+export async function releaseWebhookEvent(eventId: string): Promise<void> {
+  if (redisConfig()) await redis(["DEL", `${EVENTS_KEY}:${eventId}`]).catch(() => undefined);
+  else memoryEvents.delete(eventId);
 }
 
 export function auditEntry(entry: Omit<AuditEntry, "id" | "at">): AuditEntry {

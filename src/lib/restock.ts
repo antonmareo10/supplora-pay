@@ -11,12 +11,26 @@ import { RESTAURANT, STORE_PRODUCTS, supplierById } from "@/data/seed";
 import { callTool, replayRun, runLive } from "./agent-run";
 import { lowStock } from "./ap";
 import { anthropic, claudeErrorMessage, claudeMode, MODEL } from "./claude";
-import { fmt, pctOf, toDecimalString } from "./money";
-import { captureOrder, cartTotals, confirmWithCardOnFile, createOrder, ensureCardOnFile, firstCapture, PayPalError } from "./paypal";
+import { fmt, fromDecimalString, pctOf, toDecimalString } from "./money";
+import { fmtDay } from "./dates";
+import {
+  authorizeOrder,
+  captureAuthorization,
+  captureOrder,
+  cartTotals,
+  confirmWithCardOnFile,
+  createOrder,
+  ensureCardOnFile,
+  firstAuthorization,
+  firstCapture,
+  PayPalError,
+  voidAuthorization,
+} from "./paypal";
 import { openToolkit, orderFacts, withToolkit, type ToolkitConnection, type ToolkitResult } from "./paypal-toolkit";
 import { RESTOCK_AGENT_TOOLKIT_TOOLS } from "./paypal-toolkit-policy";
 import { fingerprint, recordedRun, recordMode, type RecordedCall } from "./recordings";
-import { auditEntry, newId, readState, updateState } from "./state";
+import { nothingDelivered, orderApproved, planSettlement, scriptedDelivery, SettlementError, type SettlementPlan } from "./settlement";
+import { auditEntry, indexPayPalResources, newId, readState, updateState } from "./state";
 import type { AgentEvent, AppState, CartLine, StoreOrder } from "./types";
 
 type Emit = (e: AgentEvent) => void;
@@ -229,7 +243,9 @@ export async function runRestockAgent(emit: Emit, signal?: AbortSignal): Promise
       }
       const supplier = supplierById(supplier_id)!;
       const localId = newId("ord");
-      const order = await createOrder({ localId, storeName: supplier.name, lines, ref: { proposalId }, source: "agent" });
+      // Intent AUTHORIZE: approval only holds the money; the delivery note decides what is captured.
+      const order = await createOrder({ localId, storeName: supplier.name, lines, ref: { proposalId }, source: "agent", intent: "AUTHORIZE" });
+      await indexPayPalResources([order.id]);
       const record: StoreOrder = {
         id: order.id,
         supplierId: supplier_id,
@@ -238,6 +254,7 @@ export async function runRestockAgent(emit: Emit, signal?: AbortSignal): Promise
         proposalId,
         lines,
         ...totals,
+        intent: "AUTHORIZE",
         status: order.status,
       };
       checkouts.set(supplier_id, record);
@@ -442,9 +459,12 @@ async function saveProposal(id: string, orders: StoreOrder[], limitCents: number
 }
 
 /**
- * Approve and pay an order with the card on file: re-read it through the PayPal Agent Toolkit
- * (refuse if PayPal's amount or status differs from what the owner approved), then
- * confirm-payment-source and capture over REST.
+ * Approve an order with the card on file: re-read it through the PayPal Agent Toolkit (refuse if
+ * PayPal's amount or status differs from what the owner approved), confirm-payment-source with the
+ * vault token, then, by intent:
+ *   - AUTHORIZE (the purchasing agent's restocks): authorize only. The money is held on the card and
+ *     captured later, for what the signed delivery note confirms (settleDelivery);
+ *   - CAPTURE (the owner buying directly in a store): capture at once.
  */
 async function payOrder(order: StoreOrder, ref: { proposalId?: string; orderId: string }): Promise<StoreOrder> {
   try {
@@ -455,23 +475,44 @@ async function payOrder(order: StoreOrder, ref: { proposalId?: string; orderId: 
   }
   const card = await ensureCardOnFile();
   // One idempotency suffix per approval attempt: double clicks are blocked by the
-  // proposal lock, and PayPal itself refuses to capture an order twice.
+  // proposal lock, and PayPal itself refuses to capture or authorize an order twice.
   const attempt = crypto.randomUUID().slice(0, 8);
+  let status = order.status;
   try {
-    const confirmed = await confirmWithCardOnFile(order.id, card.vaultId, ref, attempt);
-    const captured = confirmed.status === "COMPLETED" ? confirmed : await captureOrder(order.id, ref, attempt, order.totalCents);
-    const cap = firstCapture(captured);
-    return { ...order, status: captured.status, captureId: cap?.id, captureStatus: cap?.status, cardLabel: card.label, error: undefined };
+    // An earlier attempt may have confirmed the order before failing: do not confirm it twice.
+    const confirmed = status === "APPROVED" ? null : await confirmWithCardOnFile(order.id, card.vaultId, ref, attempt);
+    if (confirmed) status = confirmed.status;
+    if (order.intent === "AUTHORIZE") {
+      const authorized = await authorizeOrder(order.id, ref, attempt, order.totalCents);
+      const a = firstAuthorization(authorized);
+      if (!a) return { ...order, status: authorized.status, cardLabel: card.label, error: "PayPal did not return an authorization for this order." };
+      await indexPayPalResources([a.id]);
+      const amountCents = a.amount?.value ? fromDecimalString(a.amount.value) : order.totalCents;
+      const at = new Date().toISOString();
+      return {
+        ...order,
+        status: authorized.status,
+        authorization: { id: a.id, status: a.status, amountCents, expiresAt: a.expiration_time, createdAt: at },
+        cardLabel: card.label,
+        error: amountCents === order.totalCents ? undefined : `PayPal authorized ${fmt(amountCents)}, not ${fmt(order.totalCents)}.`,
+        updatedBy: { source: "app", at },
+      };
+    }
+    const done = status === "COMPLETED" && confirmed ? confirmed : await captureOrder(order.id, ref, attempt, order.totalCents);
+    const cap = firstCapture(done);
+    if (cap) await indexPayPalResources([cap.id]);
+    return { ...order, status: done.status, captureId: cap?.id, captureStatus: cap?.status, cardLabel: card.label, error: undefined, updatedBy: { source: "app", at: new Date().toISOString() } };
   } catch (err) {
     const message = err instanceof PayPalError ? err.message : err instanceof Error ? err.message : "Payment failed";
-    return { ...order, error: message };
+    return { ...order, status, error: message };
   }
 }
 
-function receive(s: Awaited<ReturnType<typeof readState>>, order: StoreOrder) {
+/** Puts delivered goods on the shelf: the delivered quantity of each line (all of it for checkout-paid orders). */
+function receive(s: Awaited<ReturnType<typeof readState>>, order: StoreOrder, delivered?: Record<string, number>) {
   for (const line of order.lines) {
     const item = s.inventory.find((i) => i.sku === line.sku);
-    if (item) item.onHand += line.qty;
+    if (item) item.onHand += delivered ? (delivered[line.sku] ?? 0) : line.qty;
   }
   order.received = true;
 }
@@ -496,32 +537,152 @@ export async function approveProposal(proposalId: string): Promise<void> {
   });
   const results: StoreOrder[] = [];
   for (const order of proposal.orders) {
-    results.push(order.status === "COMPLETED" ? order : await payOrder(order, { proposalId, orderId: order.id }));
+    results.push(orderApproved(order) ? order : await payOrder(order, { proposalId, orderId: order.id }));
   }
+  const failed = results.filter((r) => !orderApproved(r) || r.error);
   await updateState((s) => {
     const p = s.proposals.find((x) => x.id === proposalId)!;
     for (const r of results) {
       const i = s.orders.findIndex((o) => o.id === r.id);
-      if (i >= 0) s.orders[i] = r;
-      if (r.status === "COMPLETED" && !s.orders[i].received) {
+      if (i < 0) continue;
+      const before = s.orders[i];
+      s.orders[i] = r;
+      const supplier = supplierById(r.supplierId)?.name;
+      if (r.intent === "AUTHORIZE" && r.authorization && !before.authorization) {
+        s.audit.push(
+          auditEntry({
+            actor: "system",
+            message: `Order ${r.id} at ${supplier}: ${fmt(r.authorization.amountCents)} authorized on the card on file (authorization ${r.authorization.id} ${r.authorization.status}${r.authorization.expiresAt ? `, valid until ${fmtDay(r.authorization.expiresAt.slice(0, 10))}` : ""}). Nothing is captured until the signed delivery note confirms what arrived.`,
+            ref: { proposalId, orderId: r.id },
+            amountCents: r.authorization.amountCents,
+          }),
+        );
+      } else if (r.intent !== "AUTHORIZE" && r.status === "COMPLETED" && !s.orders[i].received) {
         receive(s, s.orders[i]);
         s.audit.push(
           auditEntry({
             actor: "system",
-            message: `Order ${r.id} paid at ${supplierById(r.supplierId)?.name} (${fmt(r.totalCents)}, capture ${r.captureId} ${r.captureStatus}). Stock updated; delivery tomorrow.`,
+            message: `Order ${r.id} paid at ${supplier} (${fmt(r.totalCents)}, capture ${r.captureId} ${r.captureStatus}). Stock updated; delivery tomorrow.`,
             ref: { proposalId, orderId: r.id },
             amountCents: r.totalCents,
           }),
         );
       }
     }
-    const failed = results.filter((r) => r.status !== "COMPLETED");
     p.status = failed.length ? "failed" : "completed";
     p.error = failed.length ? failed.map((f) => f.error ?? `Order ${f.id} is ${f.status}`).join("; ") : undefined;
   });
-  if (results.some((r) => r.status !== "COMPLETED")) {
-    throw new CommerceError(results.find((r) => r.error)?.error ?? "Some orders could not be paid.", 502);
+  if (failed.length) throw new CommerceError(failed.find((r) => r.error)?.error ?? "Some orders could not be paid.", 502);
+}
+
+/**
+ * The signed delivery note for an authorized order comes back: capture what it confirms, release
+ * the rest. In the public demo the delivery note is scripted ("scripted": everything arrives except
+ * one unit of the largest line; "nothing": the delivery never came) and labelled as such; in
+ * production Supplora captures the signed note at the kitchen door. Amounts are computed in code
+ * from the order's own lines (settlement.ts); the owner's click only says the note is in.
+ */
+export async function settleDelivery(orderId: string, outcome: "scripted" | "nothing"): Promise<StoreOrder> {
+  const startedAt = new Date().toISOString();
+  const claimed = await updateState((s) => {
+    const o = s.orders.find((x) => x.id === orderId);
+    if (!o) throw new CommerceError("Order not found.", 404);
+    if (o.intent !== "AUTHORIZE" || !o.authorization) throw new CommerceError("This order was paid at checkout: there is no authorization to settle.", 409);
+    if (o.delivery || o.captureId || o.authorization.status !== "CREATED") {
+      throw new CommerceError(`This order is already settled (authorization ${o.authorization.status}).`, 409);
+    }
+    if (o.settlingSince && Date.now() - Date.parse(o.settlingSince) < 120_000) throw new CommerceError("This delivery is already being settled.", 409);
+    o.settlingSince = startedAt;
+    o.error = undefined;
+    return o;
+  });
+  const auth = claimed.authorization!;
+  const delivered = outcome === "nothing" ? nothingDelivered(claimed.lines) : scriptedDelivery(claimed.lines);
+  let plan: SettlementPlan;
+  try {
+    plan = planSettlement(claimed.lines, auth.amountCents, delivered);
+  } catch (err) {
+    await updateState((s) => {
+      const o = s.orders.find((x) => x.id === orderId);
+      if (o) o.settlingSince = undefined;
+    });
+    throw new CommerceError(err instanceof SettlementError ? err.message : "Could not settle this delivery.", 400);
   }
+  const supplier = supplierById(claimed.supplierId)?.name ?? claimed.supplierId;
+  const noteNumber = `DN-${claimed.id.slice(-6)}`;
+  const ref = { orderId, proposalId: claimed.proposalId };
+  let captureId: string | undefined;
+  let captureStatus: string | undefined;
+  let authStatus = auth.status;
+  try {
+    if (plan.action === "capture") {
+      const cap = await captureAuthorization({
+        authorizationId: auth.id,
+        amountCents: plan.captureCents,
+        invoiceId: `${orderId}-${noteNumber}`,
+        note: plan.shortages.length ? `Delivery note ${noteNumber}: ${plan.shortages.join("; ")}. Only delivered goods are charged.` : `Delivery note ${noteNumber}: delivered in full.`,
+        ref,
+      });
+      captureId = cap.id;
+      captureStatus = cap.status;
+      authStatus = "CAPTURED";
+      await indexPayPalResources([cap.id]);
+    } else {
+      authStatus = (await voidAuthorization(auth.id, ref, auth.amountCents)).status;
+    }
+  } catch (err) {
+    const message = err instanceof PayPalError ? err.message : err instanceof Error ? err.message : "PayPal error";
+    await updateState((s) => {
+      const o = s.orders.find((x) => x.id === orderId);
+      if (o) {
+        o.settlingSince = undefined;
+        o.error = `Delivery not settled: ${message}`;
+      }
+    });
+    throw new CommerceError(`PayPal did not settle the delivery: ${message}`, 502);
+  }
+  return updateState((s) => {
+    const o = s.orders.find((x) => x.id === orderId)!;
+    const at = new Date().toISOString();
+    o.settlingSince = undefined;
+    o.error = undefined;
+    o.authorization = { ...o.authorization!, status: authStatus };
+    // A verified webhook may have recorded the capture already: PayPal's answer above is the same capture.
+    o.captureId = captureId ?? o.captureId;
+    o.captureStatus = captureStatus ?? o.captureStatus;
+    o.capturedCents = plan.captureCents;
+    o.releasedCents = plan.releaseCents;
+    o.delivery = {
+      noteNumber,
+      receivedAt: at,
+      receivedBy: "Javi (kitchen)",
+      scripted: true,
+      lines: plan.lines.map((l) => ({ sku: l.sku, name: l.name, ordered: l.ordered, delivered: l.delivered, unitGrossCents: l.unitGrossCents })),
+      confirmedCents: plan.captureCents,
+    };
+    o.updatedBy = { source: "app", at };
+    receive(s, o, delivered);
+    s.audit.push(
+      auditEntry({
+        actor: "system",
+        message:
+          plan.action === "capture"
+            ? `Delivery note ${noteNumber} from ${supplier} (scripted demo delivery): ${plan.shortages.length ? `${plan.shortages.join("; ")} arrived, everything else in full` : "everything arrived"}. Stock updated with what arrived.`
+            : `Delivery note ${noteNumber} from ${supplier} (scripted demo delivery): nothing arrived.`,
+        ref,
+      }),
+      auditEntry({
+        actor: "system",
+        message:
+          plan.action === "capture"
+            ? `Paid only for what arrived: ${fmt(plan.authorizedCents)} authorized → ${fmt(plan.captureCents)} captured (capture ${captureId} ${captureStatus}) → ${fmt(plan.releaseCents)} released to the card.`
+            : `Nothing arrived: authorization ${auth.id} voided, all ${fmt(plan.authorizedCents)} released to the card.`,
+        ref,
+        amountCents: plan.captureCents,
+      }),
+    );
+    return o;
+  });
 }
 
 export async function declineProposal(proposalId: string): Promise<void> {
@@ -540,8 +701,9 @@ export async function ownerCheckout(supplierId: string, items: { sku: string; qt
   const totals = cartTotals(lines);
   const supplier = supplierById(supplierId)!;
   const localId = newId("ord");
-  const created = await createOrder({ localId, storeName: supplier.name, lines, ref: {}, source: "owner" });
-  let order: StoreOrder = { id: created.id, supplierId, createdAt: new Date().toISOString(), source: "owner", lines, ...totals, status: created.status };
+  const created = await createOrder({ localId, storeName: supplier.name, lines, ref: {}, source: "owner", intent: "CAPTURE" });
+  await indexPayPalResources([created.id]);
+  let order: StoreOrder = { id: created.id, supplierId, createdAt: new Date().toISOString(), source: "owner", lines, ...totals, intent: "CAPTURE", status: created.status };
   order = await payOrder(order, { orderId: order.id });
   await updateState((s) => {
     s.orders.push(order);
