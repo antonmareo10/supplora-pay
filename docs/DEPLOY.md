@@ -6,11 +6,18 @@ The hosted demo runs with `DEMO_MODE=1`:
 - **PayPal is live (sandbox).** Every payout, checkout, vault token, capture and toolkit call hits the PayPal sandbox with the app's own sandbox REST credentials, which stay on the server.
 - **Every visitor gets a private session** (an httpOnly cookie set by `src/proxy.ts`), so judges clicking through at the same time never see each other's invoices or payments. *Reset demo* clears only your own session.
 - Uploads are off; the six bundled sample invoices are the demo.
-- PayPal writes are rate-limited per session and per hour (`src/lib/paypal.ts`).
+- PayPal writes are capped per hour per session, per client IP and in total (`src/lib/write-limits.ts`). The per-IP cap reads the client IP from the host's forwarding headers, which some hosts let clients set; the per-session and total caps do not depend on headers.
 
 ## Before deploying: give the sandbox account enough test money
 
-Every full demo run sends **€2,222.68** in payouts. Demo payees are placeholder addresses, so PayPal marks the items `UNCLAIMED` and keeps the money for 30 days. Demo mode tries to give it back: it cancels a session's unclaimed payouts on *Reset demo*, cancels payouts older than 20 minutes, and retries once after cancelling when PayPal answers `INSUFFICIENT_FUNDS`. The sandbox's cancel endpoint is not always reliable, though: on 20 Oct 2026 it answered `500 INTERNAL_SERVICE_ERROR` for a while.
+Every full demo run sends **€2,222.68** in payouts. Demo payees are placeholder addresses, so PayPal processes the batch (batch `SUCCESS`) but each item waits `UNCLAIMED`, and PayPal would keep the money for 30 days. Demo mode gives it back (`src/lib/demo-sweep.ts`):
+
+- every payout batch is **registered when PayPal accepts it**, in a registry shared by all sessions (process memory, or Redis when `KV_REST_API_*` / `UPSTASH_REDIS_REST_*` are set), so it is tracked even if the visitor closes the tab before the batch is polled;
+- a **server-side sweep** reads each registered batch older than 20 minutes from PayPal and cancels its `UNCLAIMED` items (`POST /v1/payments/payouts-item/{id}/cancel`, with a `PayPal-Request-Id`), which returns the money at once. A batch leaves the registry once none of its items can change; PayPal errors other than "already cancelled / not found" are retried on the next sweep;
+- sweeps never block a request: they run after the response (`after()` from `next/server`) when the health check is hit, when a page is rendered and after an approval (at most once a minute per server process), and after *Reset demo* for that session's payouts, whatever their age;
+- if PayPal still answers `INSUFFICIENT_FUNDS`, other sessions' unclaimed payouts are cancelled first and the payout is retried once.
+
+The sandbox's cancel endpoint is not always reliable: on 20 Oct 2026 it answered `500 INTERNAL_SERVICE_ERROR` for a while (those items are retried on later sweeps).
 
 So use a **dedicated sandbox business account with a large EUR balance** for the hosted demo:
 
@@ -28,7 +35,7 @@ So use a **dedicated sandbox business account with a large EUR balance** for the
 | `PAYPAL_CLIENT_SECRET` | sandbox app secret | Secret, server-only. |
 | `PAYPAL_BASE_URL` | `https://api-m.sandbox.paypal.com` | The app refuses any non-sandbox URL. |
 | `PAYPAL_PAYOUT_RECEIVER_OVERRIDE` | optional sandbox personal email | See step 4 above. |
-| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Vercel only (Upstash Redis) | Session store for serverless. `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` also work. |
+| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Vercel: required (Upstash Redis). Render: optional | Session store for serverless, and the demo's payout registry. On Render, without them, sessions and the registry live in process memory and are lost on a restart or deploy (payouts sent before a restart then wait the full 30 days); with them, both survive restarts. `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` also work. |
 | `ANTHROPIC_API_KEY` | **leave unset** | Not used in demo mode. |
 | `NODE_VERSION` | `24` (Render) | Node 22.18+ works. |
 
@@ -66,7 +73,7 @@ Serverless functions do not share memory, so a demo session needs a shared store
 4. **Deploy**. `vercel.json` pins the functions to Frankfurt (`fra1`). Agent routes declare `maxDuration = 300`, which Hobby allows with Fluid compute.
 5. Click through `docs/RECORDING.md` once.
 
-Limitations on Vercel: the demo's payout housekeeping registry lives in function memory, so it only covers payouts that one warm instance saw. Rely on a well-funded sandbox account (see above). Concurrent requests for the *same* session on two instances can race; that's fine for one judge clicking through, not for production.
+Limitations on Vercel: the payout registry is in Redis, so every instance sees every batch, but Vercel sends no health-check pings, so sweeps run only when visitors load pages or approve payouts; and the write caps are counted per instance. Rely on a well-funded sandbox account (see above). Concurrent requests for the *same* session on two instances can race; that's fine for one judge clicking through, not for production.
 
 ## Local demo mode (what the hosted demo does)
 

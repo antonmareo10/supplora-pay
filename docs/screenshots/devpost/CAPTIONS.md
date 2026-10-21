@@ -5,10 +5,10 @@ All images are 1500×1000 (3:2), captured in Chromium with no cursor, from real 
 | # | File | Caption | Source |
 |---|---|---|---|
 | 1 | `01-catches.png` | Before anything is paid, Supplora shows what it caught: a 16% hake price rise, 2 kg of meat never delivered, an invoice already paid, and a 2% early-payment discount. | demo |
-| 2 | `02-findings.png` | Three-way match: Claude reads the invoice photo; rules in integer cents compare it with the price history and signed delivery note, then withhold exactly €29.26. | demo |
+| 2 | `02-findings.png` | Three-way match: Claude reads the invoice image; rules in integer cents compare it with the price history and signed delivery note, then withhold exactly €29.26. | demo |
 | 3 | `03-plan-vs-cap.png` | The payment agent's plan: €2,222.68 of a €2,500 cash cap, the discount captured, one invoice deferred, the duplicate never paid. | demo |
 | 4 | `04-approval.png` | Nothing is paid until the owner approves, per invoice or all at once, as one PayPal Payouts batch. | demo |
-| 5 | `05-payouts-success.png` | Approved: a real PayPal Payouts batch (sandbox) reaches SUCCESS, with the batch, item and transaction ids. | live |
+| 5 | `05-payouts-success.png` | Approved: PayPal processes a real Payouts batch (sandbox, batch SUCCESS) with its batch, item and transaction ids; with the demo's placeholder payees each item waits UNCLAIMED until claimed. | live |
 | 6 | `06-restock-checkout.png` | Agentic commerce: the purchasing agent built a PayPal checkout within a €150 limit, but it cannot pay; only the owner's approval captures it. | demo |
 | 7 | `07-ledger-grid.png` | The ledger in AG Grid + AG Charts (Community): click a supplier's bar to filter the grid; the totals row follows every filter. | live |
 | 8 | `08-audit-log.png` | Every PayPal call is audited: Payouts, Orders v2, Vault v3, and PayPal Agent Toolkit calls over MCP. | live |
