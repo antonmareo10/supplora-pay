@@ -14,7 +14,7 @@ Built for the **PayPal AI Hackathon** (2026) · *Best Use of PayPal + AI* · *Be
 
 ## Judge in 60 seconds
 
-**Hosted demo:** being deployed (the link goes here before judging; see docs/DEPLOY.md). Until then, run it locally in demo mode in a couple of minutes, below. No Anthropic key and no PayPal account needed. Each browser gets a private session.
+**Hosted demo: https://supplora-pay.vercel.app** (no login, no keys: open it and click through the inbox, the payment run and the ledger; each browser gets a private session, *Reset demo* starts over). Payouts go to the live PayPal sandbox. You can also run it locally in demo mode in a couple of minutes, below.
 
 1. **Inbox → Review 6 with Claude.** Six supplier invoice images (Spanish and English; the bundled samples are clean renders from `scripts/generate-samples.mjs`, not phone photos) are read and checked. Open **Pescados Bahía**: the hake price went from €11.90 to €13.80/kg, so withhold **€29.26**.
 2. **Payment run → Plan this week's payments.** The agent's tool calls stream in, and the plan pays **€2,222.68 of the €2,500 cap**: it captures a €23.15 early-payment discount, defers one invoice and never pays the duplicate.
