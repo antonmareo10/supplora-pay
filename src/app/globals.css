@@ -215,6 +215,13 @@ body {
     radial-gradient(farthest-side at 100% 50%, rgb(60 45 20 / 0.18), transparent) right center / 14px 100% no-repeat scroll;
 }
 
+/* AG Grid with overlay scrollbars (phones, macOS): when an auto-height grid scrolls sideways, its
+   horizontal scroll strip (16 px, painted in the card colour) sits over the bottom of the last row.
+   Leave that much room below the rows instead, so nothing is hidden under it. */
+.ag-root:has(> .ag-body-horizontal-scroll.ag-scrollbar-invisible:not(.ag-invisible)) > .ag-grid-viewport.ag-layout-auto-height > .ag-grid-scrollable-area {
+  padding-bottom: 16px;
+}
+
 @media print {
   .no-print {
     display: none !important;
