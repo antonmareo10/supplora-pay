@@ -182,6 +182,10 @@ export interface ReviewRecord extends ReviewOutcome {
   model: string;
   durationMs: number;
   cached: boolean;
+  /** Public demo: a recording of a real Claude reading, replayed (Claude was not called for it). */
+  replayed?: boolean;
+  /** When the replayed reading was recorded. */
+  recordedAt?: string;
   extraction: Extraction;
 }
 

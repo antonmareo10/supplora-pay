@@ -21,6 +21,7 @@ export function AgentRunner({
   disabledReason,
   fields,
   intro,
+  replay,
 }: {
   endpoint: string;
   buttonLabel: string;
@@ -29,6 +30,8 @@ export function AgentRunner({
   disabledReason?: string;
   fields?: ReactNode;
   intro?: ReactNode;
+  /** Public demo: the run is a replay of a recorded Claude run. */
+  replay?: boolean;
 }) {
   const router = useRouter();
   const [events, setEvents] = useState<AgentEvent[]>([]);
@@ -87,7 +90,7 @@ export function AgentRunner({
           <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
             Agent log · {events.some((e) => e.type === "info" && e.tone === "replay") ? "demo replay" : events.some((e) => e.type === "info") ? "demo fallback" : "live"}
           </p>
-          <AgentTimeline events={events} running={running} />
+          <AgentTimeline events={events} running={running} replay={replay} />
         </div>
       )}
     </div>

@@ -278,6 +278,7 @@ export async function reviewDocument(docId: string): Promise<DocumentRecord> {
       model: ex.result.model,
       durationMs: ex.result.durationMs,
       cached: ex.cached,
+      ...(ex.replayed ? { replayed: true, recordedAt: ex.result.createdAt } : {}),
       extraction,
     };
     doc.review = record;

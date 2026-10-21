@@ -73,6 +73,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           </ul>
           <p className="text-muted">
             Business date: <span className="text-ink-2">{fmtDayLong(today)}</span>
+            <span className="block text-[11px]">Pinned to the sample invoices&apos; week; log times are real.</span>
           </p>
           <ResetDemoButton />
         </div>

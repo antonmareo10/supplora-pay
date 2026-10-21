@@ -113,9 +113,12 @@ function IconPlay() {
   );
 }
 
-export function AgentTimeline({ events, running }: { events: AgentEvent[]; running?: boolean }) {
+/** `replay`: the public demo replays a recorded run, so nothing is "thinking" live. */
+export function AgentTimeline({ events, running, replay }: { events: AgentEvent[]; running?: boolean; replay?: boolean }) {
   const rows = toRows(events);
   const done = events.find((e) => e.type === "done") as Extract<AgentEvent, { type: "done" }> | undefined;
+  const fallback = events.some((e) => e.type === "info" && e.tone === "fallback");
+  const replaying = !fallback && (replay || events.some((e) => e.type === "info" && e.tone === "replay"));
   return (
     <ol className="relative space-y-2.5 border-l border-dashed border-line-2 pl-5" aria-live="polite">
       {rows.map((row) => {
@@ -179,7 +182,7 @@ export function AgentTimeline({ events, running }: { events: AgentEvent[]; runni
       {running && !done && (
         <li className="relative text-[13px] text-muted">
           <span className="pulse-dot absolute -left-[25px] top-1.5 h-2 w-2 rounded-full bg-ledger" aria-hidden="true" />
-          Claude is thinking…
+          {fallback ? "Running the rules…" : replaying ? "Replaying recorded run…" : "Claude is thinking…"}
         </li>
       )}
       {done && <li className="text-xs text-muted">Finished in {(done.elapsedMs / 1000).toFixed(1)} s</li>}

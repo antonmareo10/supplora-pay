@@ -26,14 +26,17 @@ export default async function OverviewPage() {
   const allReviewed = s.reviewed === s.documents;
   const lastBatch = state.batches[state.batches.length - 1];
 
+  // Every finding behind the money above: high-severity flags, discounts, and every line that withholds
+  // euros (whatever its severity), including invoices already sent with an amount still withheld,
+  // so the list adds up to the "Overcharges withheld" figure.
   const attention = state.documents
-    .filter((d) => d.review && !isPaidOrSent(d))
+    .filter((d) => d.review && (!isPaidOrSent(d) || effective(d)!.action !== "pay_full"))
     .flatMap((d) =>
       d.review!.findings
-        .filter((f) => f.severity === "high" || f.severity === "opportunity")
+        .filter((f) => f.severity === "high" || f.severity === "opportunity" || f.withholdCents > 0)
         .map((f) => ({ doc: d, f, supplier: supplierById(d.review!.supplierId)?.name ?? d.review!.extraction.supplier_name })),
     )
-    .slice(0, 6);
+    .slice(0, 10);
 
   const steps: { title: string; status: ReactNode; done: boolean; href: string; cta: string }[] = [
     {
@@ -94,7 +97,12 @@ export default async function OverviewPage() {
   return (
     <div className="space-y-10">
       <header className="rise">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">{fmtDayLong(today)}</p>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">
+          {fmtDayLong(today)}
+          <span className="ml-2 font-normal normal-case tracking-normal">
+            · business date pinned to the sample invoices&apos; week; activity times are real
+          </span>
+        </p>
         <h1 className="font-display mt-1 text-5xl leading-[1.02] text-ink sm:text-6xl">
           Hola, {RESTAURANT.ownerFirstName}.
         </h1>
@@ -202,7 +210,7 @@ export default async function OverviewPage() {
                       </div>
                       <span className={cx("num shrink-0 text-sm font-semibold", f.severity === "opportunity" ? "text-olive" : "text-terracotta")}>
                         {f.severity === "opportunity" ? "−" : ""}
-                        {fmt(f.impactCents || e.withheldCents)}
+                        {fmt(f.withholdCents > 0 ? f.withholdCents : f.impactCents || e.withheldCents)}
                       </span>
                     </Link>
                   </li>

@@ -7,7 +7,7 @@ import { IconArrowLeft, IconCheck, IconTruck } from "@/components/icons";
 import { ACTION_TONE, buttonClass, Card, cx, docStatus, ErrorNote, Money, Mono, paymentLabel, Pill, SEVERITY_LABEL, SEVERITY_TONE, SeverityIcon, Stamp } from "@/components/ui";
 import { CATALOG, DELIVERY_NOTES, supplierById } from "@/data/seed";
 import { ACTION_LABEL, effective, isPaidOrSent } from "@/lib/ap";
-import { claudeAvailable } from "@/lib/claude";
+import { claudeAvailable, claudeMode } from "@/lib/claude";
 import { businessToday, fmtDay, fmtDateTime, relativeDue } from "@/lib/dates";
 import { fmt, fmtQty, toCents } from "@/lib/money";
 import { readState } from "@/lib/state";
@@ -333,8 +333,18 @@ export default async function ReviewPage(props: PageProps<"/inbox/[id]">) {
 
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-paper/60 px-4 py-3 text-xs text-muted">
                 <span>
-                  Read by Claude (<Mono>{r.model}</Mono>) in {(r.durationMs / 1000).toFixed(1)} s{r.cached ? " · cached reading reused" : ""} · reviewed{" "}
-                  {fmtDateTime(r.reviewedAt)} · legibility {r.extraction.legibility.replace("_", " ")}
+                  {r.replayed || (r.cached && claudeMode() === "replay") ? (
+                    <>
+                      Recorded reading by Claude (<Mono>{r.model}</Mono>
+                      {r.recordedAt ? `, recorded ${fmtDay(r.recordedAt.slice(0, 10))}` : ""}, took {(r.durationMs / 1000).toFixed(1)} s), replayed in
+                      this demo; the checks ran live
+                    </>
+                  ) : (
+                    <>
+                      Read by Claude (<Mono>{r.model}</Mono>) in {(r.durationMs / 1000).toFixed(1)} s{r.cached ? " · cached reading reused" : ""}
+                    </>
+                  )}{" "}
+                  · reviewed {fmtDateTime(r.reviewedAt)} · legibility {r.extraction.legibility.replace("_", " ")}
                 </span>
                 {!settled && <ReviewButton docId={doc.id} label="Review again" variant="ghost" />}
               </div>

@@ -8,7 +8,7 @@ import { PlanApproval } from "@/components/client/PlanApproval";
 import { IconSpark } from "@/components/icons";
 import { Card, Empty, PageHeader, Pill, SectionTitle } from "@/components/ui";
 import { RESTAURANT, supplierById } from "@/data/seed";
-import { claudeAvailable } from "@/lib/claude";
+import { claudeAvailable, claudeMode } from "@/lib/claude";
 import { businessToday, fmtDateTime, fmtDay } from "@/lib/dates";
 import { fmt } from "@/lib/money";
 import { paypalConfigured } from "@/lib/paypal";
@@ -56,7 +56,8 @@ export default async function PaymentsPage() {
         <AgentRunner
           endpoint="/api/payment-run"
           buttonLabel={active ? "Re-plan this week" : "Plan this week's payments"}
-          runningLabel="Planning with Claude…"
+          runningLabel={claudeMode() === "replay" ? "Planning…" : "Planning with Claude…"}
+          replay={claudeMode() === "replay"}
           disabled={!canRun}
           disabledReason={
             !claudeAvailable()
