@@ -70,7 +70,8 @@ export function SectionTitle({ kicker, title, aside, id }: { kicker?: string; ti
     <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
       <div>
         {kicker && <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">{kicker}</p>}
-        <h2 id={id} className="font-display text-2xl leading-tight text-ink">
+        {/* scroll-mt: an anchor jump to the heading keeps its kicker in view too. */}
+        <h2 id={id} className={cx("font-display text-2xl leading-tight text-ink", kicker && "scroll-mt-5")}>
           {title}
         </h2>
       </div>

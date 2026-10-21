@@ -169,7 +169,7 @@ export default async function LedgerPage() {
         </section>
       )}
 
-      <section aria-labelledby="audit-title" id="audit" className="scroll-mt-24">
+      <section aria-labelledby="audit-title" id="audit">
         <SectionTitle id="audit-title" kicker={`${state.audit.length} entries · ${apiCalls} PayPal API calls`} title="Audit log" />
         <Card className="p-5 sm:p-6">
           <AuditLog entries={[...state.audit].reverse()} />

@@ -58,6 +58,23 @@ body {
   color: var(--ink);
 }
 
+/* Anchor jumps (/ledger#audit, /reorder#orders...) and scrollIntoView stop below the sticky top bar
+   on phones and tablets: 122 px tall with two rows of tabs (below 640 px), 87 px with one, and gone
+   from lg up, where the navigation is a sidebar. */
+html {
+  scroll-padding-top: 8.5rem;
+}
+@media (min-width: 40rem) {
+  html {
+    scroll-padding-top: 6.5rem;
+  }
+}
+@media (min-width: 64rem) {
+  html {
+    scroll-padding-top: 1.5rem;
+  }
+}
+
 body {
   font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   font-feature-settings: "cv11", "ss01";
