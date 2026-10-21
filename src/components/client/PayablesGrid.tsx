@@ -44,9 +44,10 @@ import { PALETTE, SEVERITY_DOT, STATUS_PILL, supploraTheme } from "./ag-theme";
 
 ChartsModuleRegistry.registerModules([ChartsCommunityModule]);
 
-// Room for a two-line supplier name or finding (long ones are clamped; the tooltip has them all).
+// Room for a two-line supplier name or finding (long ones are clamped; the tooltip has them all),
+// and slightly tighter cell padding so every column fits a 1440 px screen, PayPal ids included.
 // Set on the theme, not the grid, so plain text cells stay vertically centred too.
-const payablesTheme = supploraTheme.withParams({ rowHeight: 64 });
+const payablesTheme = supploraTheme.withParams({ rowHeight: 64, cellHorizontalPadding: 12 });
 
 type GroupKey = "none" | "status" | "supplier";
 
@@ -119,9 +120,12 @@ function InvoiceCell(p: ICellRendererParams<PayableRow>) {
 function StatusCell(p: ICellRendererParams<PayableRow>) {
   if (p.node.rowPinned || !p.data) return null;
   const s = p.data.status;
+  // "Sent · awaiting claim" → a "Sent" pill with "awaiting claim" underneath, so the column stays narrow.
+  const [pill, detail] = STATUS_LABEL[s].split(" · ");
   return (
     <span className="flex h-full flex-col items-start justify-center gap-0.5 leading-tight">
-      <span className={cx("inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium", STATUS_PILL[s])}>{STATUS_LABEL[s]}</span>
+      <span className={cx("inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium", STATUS_PILL[s])}>{pill}</span>
+      {detail && <span className="text-[10.5px] text-[#8a5a0c]">{detail}</span>}
       {p.data.ownerDecision && <span className="text-[10.5px] text-muted">owner changed it to {p.data.recommendationLabel.toLowerCase()}</span>}
     </span>
   );
@@ -373,7 +377,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         cellRenderer: SupplierCell,
         pinned: "left",
         lockPinned: true,
-        width: narrow ? 150 : 188,
+        width: narrow ? 148 : 180,
         // Search and filter by supplier, category or invoice number.
         getQuickFilterText: (p) => (p.data ? `${p.data.supplier} ${p.data.category} ${p.data.invoiceNumber}` : ""),
         filterValueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? `${p.data.supplier} ${p.data.invoiceNumber}` : ""),
@@ -383,7 +387,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         field: "status",
         headerName: "Status",
         cellRenderer: StatusCell,
-        width: 132,
+        width: 116,
         enableCellChangeFlash: true,
         comparator: (a: PayableStatus, b: PayableStatus) => STATUS_ORDER.indexOf(a) - STATUS_ORDER.indexOf(b),
         filterValueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? STATUS_LABEL[p.data.status] : ""),
@@ -394,14 +398,14 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         headerName: "Amounts (EUR, VAT incl.)",
         marryChildren: true,
         children: [
-          { field: "invoiceCents", headerName: "Invoiced", type: "rightAligned", cellClass: "num", width: 100, valueFormatter: moneyFmt, filter: "agNumberColumnFilter", filterValueGetter: euros("invoiceCents") },
+          { field: "invoiceCents", headerName: "Invoiced", type: "rightAligned", cellClass: "num", width: 92, valueFormatter: moneyFmt, filter: "agNumberColumnFilter", filterValueGetter: euros("invoiceCents") },
           {
             field: "withheldCents",
             headerName: "Withheld",
             headerTooltip: "Withheld until the supplier sends a credit note, or the whole invoice when it is held (e.g. a duplicate)",
             type: "rightAligned",
             cellRenderer: WithheldCell,
-            width: 112,
+            width: 100,
             valueFormatter: moneyOrDash,
             filter: "agNumberColumnFilter",
             filterValueGetter: euros("withheldCents"),
@@ -412,7 +416,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
             headerTooltip: "Sent through PayPal Payouts: claimed by the supplier, or awaiting their claim. Includes any early-payment discount taken.",
             type: "rightAligned",
             cellRenderer: SentCell,
-            width: 108,
+            width: 112,
             enableCellChangeFlash: true,
             valueFormatter: moneyOrDash,
             filter: "agNumberColumnFilter",
@@ -434,7 +438,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
             tooltipField: "finding",
             tooltipComponent: FindingsTooltip,
             flex: 1,
-            minWidth: 200,
+            minWidth: 180,
             filter: "agTextColumnFilter",
           },
           // The status pill already shows the outcome; kept for the CSV export and search.
@@ -444,7 +448,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
             headerName: "Due",
             cellRenderer: dueCell,
             valueFormatter: dueFmt,
-            width: 100,
+            width: 96,
             // The date picker does not fit a floating filter this narrow; the header menu has it.
             floatingFilter: false,
             filter: "agDateColumnFilter",
@@ -466,12 +470,13 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
           // Shown under the supplier name; kept as a column for the CSV export.
           { field: "invoiceNumber", headerName: "Invoice no.", cellRenderer: InvoiceCell, width: 136, hide: true, filter: "agTextColumnFilter" },
           {
-            headerName: "Payout batch · item",
+            headerName: "Batch · item",
+            headerTooltip: "PayPal payout batch id and payout item id",
             colId: "paypal",
             cellRenderer: PaypalCell,
             enableCellChangeFlash: true,
             valueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? [p.data.paypalBatchId, p.data.paypalItemId].filter(Boolean).join(" ") : ""),
-            width: 136,
+            width: 124,
             hide: !anySent,
             filter: "agTextColumnFilter",
           },
