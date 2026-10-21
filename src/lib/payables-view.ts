@@ -7,7 +7,7 @@
 // exactly with the KPI tiles above the grid.
 
 import { supplierById } from "@/data/seed";
-import { effective, OVERCHARGE_KINDS } from "@/lib/ap";
+import { effective } from "@/lib/ap";
 import { ACTION_LABEL, STATUS_LABEL, statusOf, type PayableStatus } from "@/lib/payables-status";
 import type { AppState, PayAction, Severity } from "@/lib/types";
 
@@ -36,8 +36,6 @@ export interface PayableRow {
   discountCents: number;
   /** Amount sent through PayPal Payouts, claimed or still UNCLAIMED (null when nothing has been sent yet). */
   paidCents: number | null;
-  /** Money this invoice saved the restaurant: caught overcharges + blocked duplicate + captured discount. */
-  savedCents: number;
   paypalBatchId: string | null;
   paypalItemId: string | null;
 }
@@ -58,14 +56,6 @@ export function buildPayableRows(state: AppState): PayableRow[] {
 
     const findings = [...r.findings].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
     const top = findings[0];
-
-    // Savings attributable to this invoice — same three buckets ledgerStats() totals.
-    let savedCents = 0;
-    if (e.action !== "pay_full") {
-      savedCents += r.findings.filter((f) => OVERCHARGE_KINDS.includes(f.kind)).reduce((s, f) => s + f.withholdCents, 0);
-    }
-    if (e.action === "hold" && r.findings.some((f) => f.kind === "duplicate")) savedCents += e.invoiceCents;
-    if (paid) savedCents += doc.payment.discountCents ?? 0;
 
     rows.push({
       id: doc.id,
@@ -88,7 +78,6 @@ export function buildPayableRows(state: AppState): PayableRow[] {
       discountCents: doc.payment.discountCents ?? 0,
       // Money sent through PayPal (claimed or awaiting the supplier's claim), same rule as ledgerStats().
       paidCents: paid ? doc.payment.amountCents ?? null : null,
-      savedCents,
       paypalBatchId: doc.payment.batchId ?? null,
       paypalItemId: doc.payment.payoutItemId ?? null,
     });

@@ -78,7 +78,24 @@ export function BatchStatus({ initial, names, demo }: { initial: PayoutBatchReco
           </Stamp>
         </div>
       </header>
-      <div className="table-wrap">
+      {/* Phones: one row per payout item, status visible without scrolling sideways. */}
+      <ul className="divide-y divide-line sm:hidden">
+        {batch.items.map((i) => (
+          <li key={i.senderItemId} className="px-4 py-3 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <p className="min-w-0 font-medium text-ink">{names[i.docId] ?? i.docId}</p>
+              <span className="num shrink-0 font-medium">{fmt(i.amountCents)}</span>
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <Pill tone={itemTone(i.transactionStatus)}>{i.transactionStatus}</Pill>
+              {i.payoutItemId ? <Mono className="text-[11px]">item {i.payoutItemId}</Mono> : <span className="text-xs text-muted">assigning…</span>}
+              {i.errorName && i.errorName !== "RECEIVER_UNREGISTERED" && <span className="text-[11px] text-terracotta">{i.errorName}</span>}
+            </div>
+            <Mono className="mt-0.5 block break-all text-[11px] text-muted">{i.receiver}</Mono>
+          </li>
+        ))}
+      </ul>
+      <div className="table-wrap hidden sm:block">
         <table className="w-full min-w-[620px] text-sm">
           <thead>
             <tr className="border-b border-line text-left text-[11px] uppercase tracking-wider text-muted">

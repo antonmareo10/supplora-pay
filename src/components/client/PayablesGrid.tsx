@@ -8,10 +8,11 @@
 //
 // What is custom here (all Community, no Enterprise modules, no watermark):
 //  - theme: Quartz re-skinned to the app's palette (ag-theme.ts), incl. change-flash colour;
-//  - layout: column groups (Invoice / Amounts / PayPal), supplier pinned left for narrow screens,
-//    a filter-aware pinned totals row, a live subtotal strip, chart above the grid;
+//  - layout: column groups (Amounts / Why / PayPal), supplier pinned left for narrow screens, a
+//    flexible, wrapping "Top finding" column and two-line rows so the grid fits a laptop screen
+//    without cutting text, a filter-aware pinned totals row, a live subtotal strip, chart above;
 //  - widgets: status pills, severity dots, a findings tooltip with the evidence behind every
-//    flag, an in-cell "saved" bar, due dates with relative labels, PayPal id cells;
+//    flag, an in-cell bar on withheld amounts, due dates with relative labels, PayPal id cells;
 //  - cross-filtering: status chips and a click on a supplier's bar in the chart are AG Grid
 //    external filters; the chart is recomputed from the rows that pass the grid's filters
 //    (quick search, column filters, chips), so chart, grid and totals always agree.
@@ -22,7 +23,6 @@ import Link from "next/link";
 import { AgCharts } from "ag-charts-react";
 import { AllCommunityModule as ChartsCommunityModule, ModuleRegistry as ChartsModuleRegistry, type AgCartesianChartOptions } from "ag-charts-community";
 import {
-  type CellClassRules,
   type ColDef,
   type ColGroupDef,
   type GridApi,
@@ -44,6 +44,10 @@ import { PALETTE, SEVERITY_DOT, STATUS_PILL, supploraTheme } from "./ag-theme";
 
 ChartsModuleRegistry.registerModules([ChartsCommunityModule]);
 
+// Room for a two-line supplier name or finding (long ones are clamped; the tooltip has them all).
+// Set on the theme, not the grid, so plain text cells stay vertically centred too.
+const payablesTheme = supploraTheme.withParams({ rowHeight: 64 });
+
 type GroupKey = "none" | "status" | "supplier";
 
 interface TotalsRow {
@@ -55,7 +59,6 @@ interface TotalsRow {
   withheldCents: number;
   discountCents: number;
   paidCents: number;
-  savedCents: number;
 }
 
 interface GroupSummary {
@@ -76,7 +79,7 @@ interface SupplierMoney {
 }
 
 interface GridContext {
-  maxSaved: number;
+  maxWithheld: number;
 }
 
 // --- cell renderers & widgets ----------------------------------------------
@@ -94,8 +97,12 @@ function SupplierCell(p: ICellRendererParams<PayableRow>) {
   if (!row) return null;
   return (
     <Link href={`/inbox/${row.id}`} className="group flex h-full flex-col justify-center leading-tight">
-      <span className="truncate font-medium text-ink group-hover:text-ledger">{row.supplier}</span>
-      <span className="text-[11px] capitalize text-muted">{row.category}</span>
+      <span className="line-clamp-2 whitespace-normal font-medium text-ink group-hover:text-ledger" title={row.supplier}>
+        {row.supplier}
+      </span>
+      <span className="mt-0.5 text-[11px] text-muted">
+        <span className="capitalize">{row.category}</span> · <span className="font-mono tracking-tight">{row.invoiceNumber}</span>
+      </span>
     </Link>
   );
 }
@@ -112,7 +119,12 @@ function InvoiceCell(p: ICellRendererParams<PayableRow>) {
 function StatusCell(p: ICellRendererParams<PayableRow>) {
   if (p.node.rowPinned || !p.data) return null;
   const s = p.data.status;
-  return <span className={cx("inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium", STATUS_PILL[s])}>{STATUS_LABEL[s]}</span>;
+  return (
+    <span className="flex h-full flex-col items-start justify-center gap-0.5 leading-tight">
+      <span className={cx("inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium", STATUS_PILL[s])}>{STATUS_LABEL[s]}</span>
+      {p.data.ownerDecision && <span className="text-[10.5px] text-muted">owner changed it to {p.data.recommendationLabel.toLowerCase()}</span>}
+    </span>
+  );
 }
 
 function RecommendationCell(p: ICellRendererParams<PayableRow>) {
@@ -130,9 +142,9 @@ function FindingCell(p: ICellRendererParams<PayableRow>) {
   if (p.node.rowPinned || !p.data) return null;
   const sev = p.data.findingSeverity;
   return (
-    <span className="flex h-full items-center gap-2 leading-tight">
+    <span className="flex h-full items-center gap-2 leading-snug">
       <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full", sev ? SEVERITY_DOT[sev] : "bg-line-2")} aria-hidden />
-      <span className="truncate text-ink-2">{p.data.finding}</span>
+      <span className="line-clamp-3 min-w-0 whitespace-normal text-ink-2">{p.data.finding}</span>
       {p.data.findingCount > 1 && <span className="shrink-0 rounded-full bg-paper-2 px-1.5 text-[11px] text-muted">+{p.data.findingCount - 1}</span>}
     </span>
   );
@@ -190,18 +202,31 @@ function makeDueCell(today: string) {
   };
 }
 
-/** In-cell bar: how much this invoice saved, relative to the best one in the grid. */
-function SavedCell(p: ICellRendererParams<PayableRow, number, GridContext>) {
+/** In-cell bar: what this invoice holds back (withheld lines or the whole held invoice), relative to the largest in the grid. */
+function WithheldCell(p: ICellRendererParams<PayableRow, number, GridContext>) {
   const v = p.value ?? 0;
-  if (p.node.rowPinned) return <span className="num font-semibold text-olive">{v ? fmt(v) : "—"}</span>;
+  if (p.node.rowPinned) return <span className="num font-semibold text-terracotta">{v ? fmt(v) : "—"}</span>;
   if (!v) return <span className="text-muted">—</span>;
-  const pct = Math.max(6, Math.round((v / Math.max(1, p.context?.maxSaved ?? v)) * 100));
+  const pct = Math.max(6, Math.round((v / Math.max(1, p.context?.maxWithheld ?? v)) * 100));
   return (
-    <span className="flex h-full flex-col items-end justify-center gap-1">
-      <span className="num font-medium text-olive">{fmt(v)}</span>
-      <span className="h-1 w-16 overflow-hidden rounded-full bg-olive-soft" aria-hidden>
-        <span className="block h-full rounded-full bg-olive-2" style={{ width: `${pct}%` }} />
+    <span className="flex h-full flex-col items-end justify-center gap-1 leading-tight">
+      <span className="num font-medium text-terracotta">{fmt(v)}</span>
+      <span className="h-1 w-16 overflow-hidden rounded-full bg-terracotta-soft" aria-hidden>
+        <span className="block h-full rounded-full bg-terracotta/70" style={{ width: `${pct}%` }} />
       </span>
+    </span>
+  );
+}
+
+/** Sent through PayPal, with the early-payment discount it captured (if any). */
+function SentCell(p: ICellRendererParams<PayableRow, number>) {
+  const v = p.value;
+  const discount = p.data?.discountCents ?? 0;
+  if (!v) return <span className="text-muted">—</span>;
+  return (
+    <span className="flex h-full flex-col items-end justify-center leading-tight">
+      <span className={cx("num", p.node.rowPinned ? "font-semibold text-ink" : "font-medium text-ink")}>{fmt(v)}</span>
+      {discount > 0 && <span className="num text-[11px] text-olive">−{fmt(discount)} discount</span>}
     </span>
   );
 }
@@ -223,14 +248,40 @@ const eurAxis = (v: number) => (v >= 1000 ? `€${(v / 1000).toFixed(1)}k` : `�
 const SERIES = [
   ["paid", "Sent via PayPal", PALETTE.olive2],
   ["toPay", "To pay / in flight", PALETTE.ledger2],
-  ["withheld", "Withheld (credit note asked)", PALETTE.saffron],
+  ["withheld", "Withheld (until credit note)", PALETTE.saffron],
   ["held", "Held (not paid)", PALETTE.terracotta],
 ] as const;
 
-function moneyChartOptions(data: SupplierMoney[], selected: string | null, onPick: (supplier: string) => void): AgCartesianChartOptions {
+type SeriesKey = (typeof SERIES)[number][0];
+
+/**
+ * Narrow screens: a short label that fits the axis (full name in the tooltip), so names are never
+ * clipped at the chart's edge: no legal form, whole words up to 14 characters.
+ */
+function shortSupplier(name: string): string {
+  const base = name.replace(/,?\s+(S\.L\.|S\.A\.|Ltd\.?|Co\.?|Inc\.?)$/i, "");
+  if (base.length <= 14) return base;
+  let out = "";
+  for (const word of base.split(/\s+/)) {
+    const next = out ? `${out} ${word}` : word;
+    if (next.length > 14) break;
+    out = next;
+  }
+  out = out.replace(/\s+(de|del|la|y|&|and|of)$/i, "");
+  return out || `${base.slice(0, 13)}…`;
+}
+
+function moneyChartOptions(
+  data: SupplierMoney[],
+  selected: string | null,
+  onPick: (supplier: string) => void,
+  hidden: Set<SeriesKey>,
+  narrow: boolean,
+): AgCartesianChartOptions {
   return {
     data,
     series: SERIES.map(([yKey, yName, fill]) => ({
+      visible: !hidden.has(yKey),
       type: "bar",
       direction: "horizontal",
       xKey: "supplier",
@@ -250,12 +301,23 @@ function moneyChartOptions(data: SupplierMoney[], selected: string | null, onPic
       },
     })),
     axes: {
-      x: { type: "category", position: "left", label: { fontSize: 12, color: PALETTE.ink2 } },
+      x: {
+        type: "category",
+        position: "left",
+        label: {
+          fontSize: narrow ? 11 : 12,
+          color: PALETTE.ink2,
+          truncate: true,
+          formatter: ({ value }: { value: string }) => (narrow ? shortSupplier(String(value)) : String(value)),
+        },
+      },
       y: { type: "number", position: "bottom", label: { formatter: ({ value }: { value: number }) => eurAxis(value), color: PALETTE.muted, fontSize: 11 } },
     },
-    legend: { position: "bottom", item: { label: { color: PALETTE.ink2, fontSize: 12 } } },
+    // The legend is HTML below the chart: it wraps on a phone instead of paginating, and leaves no
+    // off-screen focus targets that widen the page.
+    legend: { enabled: false },
     background: { fill: PALETTE.card },
-    padding: { top: 8, right: 16, bottom: 4, left: 4 },
+    padding: { top: 8, right: narrow ? 10 : 16, bottom: 4, left: 4 },
     theme: { params: { fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif", foregroundColor: PALETTE.ink, textColor: PALETTE.ink2 } },
     listeners: { seriesNodeClick: (e: { datum: unknown }) => onPick((e.datum as SupplierMoney).supplier) },
   } as unknown as AgCartesianChartOptions;
@@ -276,13 +338,25 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
   const [totals, setTotals] = useState<TotalsRow | null>(null);
   const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [chartData, setChartData] = useState<SupplierMoney[]>([]);
+  const [hiddenSeries, setHiddenSeries] = useState<Set<SeriesKey>>(new Set());
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => setNarrow(entry.contentRect.width < 640));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const presentStatuses = useMemo(() => {
     const seen = new Set(rows.map((r) => r.status));
     return STATUS_ORDER.filter((s) => seen.has(s));
   }, [rows]);
 
-  const context = useMemo<GridContext>(() => ({ maxSaved: Math.max(0, ...rows.map((r) => r.savedCents)) }), [rows]);
+  const context = useMemo<GridContext>(() => ({ maxWithheld: Math.max(0, ...rows.map((r) => r.withheldCents)) }), [rows]);
+  // The PayPal ids column only earns its width once something has been sent.
+  const anySent = useMemo(() => rows.some((r) => r.paypalBatchId), [rows]);
 
   const columnDefs = useMemo<(ColDef<PayableRow> | ColGroupDef<PayableRow>)[]>(() => {
     const dueCell = makeDueCell(today);
@@ -295,18 +369,21 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
     return [
       {
         field: "supplier",
-        headerName: "Supplier",
+        headerName: "Supplier · invoice",
         cellRenderer: SupplierCell,
         pinned: "left",
         lockPinned: true,
-        width: 200,
+        width: narrow ? 150 : 188,
+        // Search and filter by supplier, category or invoice number.
+        getQuickFilterText: (p) => (p.data ? `${p.data.supplier} ${p.data.category} ${p.data.invoiceNumber}` : ""),
+        filterValueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? `${p.data.supplier} ${p.data.invoiceNumber}` : ""),
         filter: "agTextColumnFilter",
       },
       {
         field: "status",
         headerName: "Status",
         cellRenderer: StatusCell,
-        width: 164,
+        width: 132,
         enableCellChangeFlash: true,
         comparator: (a: PayableStatus, b: PayableStatus) => STATUS_ORDER.indexOf(a) - STATUS_ORDER.indexOf(b),
         filterValueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? STATUS_LABEL[p.data.status] : ""),
@@ -317,14 +394,14 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         headerName: "Amounts (EUR, VAT incl.)",
         marryChildren: true,
         children: [
-          { field: "invoiceCents", headerName: "Invoiced", type: "rightAligned", cellClass: "num", width: 110, valueFormatter: moneyFmt, filter: "agNumberColumnFilter", filterValueGetter: euros("invoiceCents") },
+          { field: "invoiceCents", headerName: "Invoiced", type: "rightAligned", cellClass: "num", width: 100, valueFormatter: moneyFmt, filter: "agNumberColumnFilter", filterValueGetter: euros("invoiceCents") },
           {
             field: "withheldCents",
             headerName: "Withheld",
+            headerTooltip: "Withheld until the supplier sends a credit note, or the whole invoice when it is held (e.g. a duplicate)",
             type: "rightAligned",
-            cellClass: "num",
-            cellClassRules: { "text-terracotta": (p) => (p.value as number) > 0 } as CellClassRules<PayableRow>,
-            width: 106,
+            cellRenderer: WithheldCell,
+            width: 112,
             valueFormatter: moneyOrDash,
             filter: "agNumberColumnFilter",
             filterValueGetter: euros("withheldCents"),
@@ -332,25 +409,17 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
           {
             field: "paidCents",
             headerName: "Sent",
-            headerTooltip: "Sent through PayPal Payouts: claimed by the supplier, or awaiting their claim",
+            headerTooltip: "Sent through PayPal Payouts: claimed by the supplier, or awaiting their claim. Includes any early-payment discount taken.",
             type: "rightAligned",
-            cellClass: "num font-medium",
-            width: 110,
+            cellRenderer: SentCell,
+            width: 108,
             enableCellChangeFlash: true,
             valueFormatter: moneyOrDash,
             filter: "agNumberColumnFilter",
             filterValueGetter: euros("paidCents"),
           },
-          { field: "savedCents", headerName: "Saved", type: "rightAligned", cellRenderer: SavedCell, width: 108 },
-          {
-            field: "discountCents",
-            headerName: "Discount",
-            type: "rightAligned",
-            cellClass: "num",
-            cellClassRules: { "text-olive": (p) => (p.value as number) > 0 } as CellClassRules<PayableRow>,
-            width: 100,
-            valueFormatter: moneyOrDash,
-          },
+          // Shown inside the Sent cell; kept as a column for the CSV export and search.
+          { field: "discountCents", headerName: "Discount", hide: true, valueFormatter: moneyOrDash },
         ],
       },
       {
@@ -359,20 +428,23 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         children: [
           {
             field: "finding",
-            headerName: "Top finding · hover for evidence",
+            headerName: "Top finding",
+            headerTooltip: "Hover a finding for the evidence behind it",
             cellRenderer: FindingCell,
             tooltipField: "finding",
             tooltipComponent: FindingsTooltip,
-            width: 260,
+            flex: 1,
+            minWidth: 200,
             filter: "agTextColumnFilter",
           },
-          { field: "recommendationLabel", headerName: "Claude + rules", cellRenderer: RecommendationCell, width: 150, filter: "agTextColumnFilter" },
+          // The status pill already shows the outcome; kept for the CSV export and search.
+          { field: "recommendationLabel", headerName: "Claude + rules", cellRenderer: RecommendationCell, width: 150, hide: true, filter: "agTextColumnFilter" },
           {
             field: "dueDate",
             headerName: "Due",
             cellRenderer: dueCell,
             valueFormatter: dueFmt,
-            width: 116,
+            width: 100,
             // The date picker does not fit a floating filter this narrow; the header menu has it.
             floatingFilter: false,
             filter: "agDateColumnFilter",
@@ -389,22 +461,24 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         ],
       },
       {
-        headerName: "Document · PayPal",
+        headerName: "PayPal",
         children: [
-          { field: "invoiceNumber", headerName: "Invoice no.", cellRenderer: InvoiceCell, width: 136, filter: "agTextColumnFilter" },
+          // Shown under the supplier name; kept as a column for the CSV export.
+          { field: "invoiceNumber", headerName: "Invoice no.", cellRenderer: InvoiceCell, width: 136, hide: true, filter: "agTextColumnFilter" },
           {
             headerName: "Payout batch · item",
             colId: "paypal",
             cellRenderer: PaypalCell,
             enableCellChangeFlash: true,
             valueGetter: (p: ValueGetterParams<PayableRow>) => (p.data ? [p.data.paypalBatchId, p.data.paypalItemId].filter(Boolean).join(" ") : ""),
-            width: 176,
+            width: 136,
+            hide: !anySent,
             filter: "agTextColumnFilter",
           },
         ],
       },
     ];
-  }, [today]);
+  }, [today, narrow, anySent]);
 
   const defaultColDef = useMemo<ColDef<PayableRow>>(() => ({ sortable: true, resizable: true, filter: true, floatingFilter: true }), []);
 
@@ -414,7 +488,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
     const api = apiRef.current;
     if (!api) return;
     const groupBy = groupRef.current;
-    const t = { count: 0, invoice: 0, withheld: 0, discount: 0, paid: 0, saved: 0 };
+    const t = { count: 0, invoice: 0, withheld: 0, discount: 0, paid: 0 };
     const map = new Map<string, GroupSummary>();
     const money = new Map<string, SupplierMoney>();
     api.forEachNodeAfterFilter((node: IRowNode<PayableRow>) => {
@@ -425,7 +499,6 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
       t.withheld += d.withheldCents;
       t.discount += d.discountCents;
       t.paid += d.paidCents ?? 0;
-      t.saved += d.savedCents;
       if (groupBy !== "none") {
         const key = groupBy === "supplier" ? d.supplier : d.status;
         const g = map.get(key) ?? {
@@ -449,7 +522,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
       }
       money.set(d.supplier, m);
     });
-    setTotals({ __total: true, id: "__totals__", supplier: "Totals", count: t.count, invoiceCents: t.invoice, withheldCents: t.withheld, discountCents: t.discount, paidCents: t.paid, savedCents: t.saved });
+    setTotals({ __total: true, id: "__totals__", supplier: "Totals", count: t.count, invoiceCents: t.invoice, withheldCents: t.withheld, discountCents: t.discount, paidCents: t.paid });
     const list = [...map.values()];
     setGroups(groupBy === "status" ? list.sort((a, b) => STATUS_ORDER.indexOf(a.key as PayableStatus) - STATUS_ORDER.indexOf(b.key as PayableStatus)) : list.sort((a, b) => b.cents - a.cents));
     const size = (m: SupplierMoney) => m.paid + m.toPay + m.withheld + m.held;
@@ -520,6 +593,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
   const exportCsv = useCallback(() => {
     apiRef.current?.exportDataAsCsv({
       fileName: `supplora-payables-${today}.csv`,
+      allColumns: true,
       skipColumnGroupHeaders: true,
       processCellCallback: (params) => {
         const colId = params.column.getColId();
@@ -535,13 +609,23 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
   }, [today]);
 
   const pinnedBottom = useMemo(() => (totals ? [totals as unknown as PayableRow] : []), [totals]);
-  const chartOptions = useMemo(() => moneyChartOptions(chartData, supplier, pickSupplier), [chartData, supplier, pickSupplier]);
+  const chartOptions = useMemo(() => moneyChartOptions(chartData, supplier, pickSupplier, hiddenSeries, narrow), [chartData, supplier, pickSupplier, hiddenSeries, narrow]);
+  const toggleSeries = useCallback(
+    (key: SeriesKey) =>
+      setHiddenSeries((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      }),
+    [],
+  );
   const filtered = active.size > 0 || supplier !== null || quick.trim() !== "";
 
   return (
-    <div className="space-y-4">
+    <div ref={rootRef} className="min-w-0 space-y-4">
       {/* Chart: where each supplier's euros stand. Click a bar to filter the grid. */}
-      <div className="rounded-xl border border-line bg-card">
+      <div className="overflow-hidden rounded-xl border border-line bg-card">
         <div className="flex flex-wrap items-baseline justify-between gap-2 px-4 pt-3">
           <p className="text-sm font-medium text-ink">Where the money stands, by supplier</p>
           <p className="text-xs text-muted">{supplier ? `Showing ${supplier} · click its bar again to clear` : "Click a bar to filter the grid · follows every grid filter"}</p>
@@ -553,6 +637,19 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
             <p className="grid h-full place-items-center text-sm text-muted">No invoices match the current filters.</p>
           )}
         </div>
+        <ul className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 border-t border-line px-3 py-2.5 text-xs text-ink-2" aria-label="Chart legend: click to show or hide a series">
+          {SERIES.map(([key, label, fill]) => {
+            const off = hiddenSeries.has(key);
+            return (
+              <li key={key}>
+                <button type="button" onClick={() => toggleSeries(key)} aria-pressed={!off} className={cx("inline-flex items-center gap-1.5 rounded transition hover:text-ink", off && "opacity-45 line-through")}>
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ background: fill }} aria-hidden />
+                  {label}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       </div>
 
       {/* Toolbar: search · group-by · export */}
@@ -646,9 +743,11 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         </div>
       )}
 
-      <div style={{ height: 520, width: "100%" }}>
+      <div className="w-full">
         <AgGridReact<PayableRow>
-          theme={supploraTheme}
+          domLayout="autoHeight"
+          includeHiddenColumnsInQuickFilter
+          theme={payablesTheme}
           rowData={rows}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}

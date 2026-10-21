@@ -84,18 +84,46 @@ function NoteText({ text }: { text: string }) {
         if (b.kind === "table") {
           const cells = (l: string) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
           const [head, ...body] = b.lines.filter((l) => !/^\s*\|?\s*:?-{2,}/.test(l));
+          const headers = cells(head);
           return (
-            <div key={i} className="overflow-x-auto">
-              <table className="w-full min-w-[420px] text-left text-[12.5px]">
-                <thead>
-                  <tr className="border-b border-line text-[11px] uppercase tracking-wider text-muted">{cells(head).map((c, j) => <th key={j} className="py-1 pr-3 font-semibold">{c}</th>)}</tr>
-                </thead>
-                <tbody>
-                  {body.map((r, j) => (
-                    <tr key={j} className="border-b border-line/70 last:border-0">{cells(r).map((c, k) => <td key={k} className="py-1 pr-3 align-top"><Inline text={c} /></td>)}</tr>
-                  ))}
-                </tbody>
-              </table>
+            <div key={i}>
+              {/* Phones: one card per row, every column labelled (a 4-column table would cut "Why"). */}
+              <ul className="space-y-2 sm:hidden">
+                {body.map((r, j) => {
+                  const row = cells(r);
+                  return (
+                    <li key={j} className="rounded-lg border border-line/80 bg-card/70 px-3 py-2 text-[12.5px]">
+                      <p className="font-medium text-ink">
+                        <Inline text={row[0] ?? ""} />
+                      </p>
+                      <dl className="mt-1 space-y-0.5">
+                        {headers.slice(1).map((h, k) =>
+                          row[k + 1] ? (
+                            <div key={k} className="flex gap-2">
+                              <dt className="w-[4.5rem] shrink-0 pt-px text-[10.5px] uppercase tracking-wider text-muted">{h}</dt>
+                              <dd className="min-w-0">
+                                <Inline text={row[k + 1]} />
+                              </dd>
+                            </div>
+                          ) : null,
+                        )}
+                      </dl>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="hidden overflow-x-auto sm:block">
+                <table className="w-full min-w-[420px] text-left text-[12.5px]">
+                  <thead>
+                    <tr className="border-b border-line text-[11px] uppercase tracking-wider text-muted">{headers.map((c, j) => <th key={j} className="py-1 pr-3 font-semibold">{c}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {body.map((r, j) => (
+                      <tr key={j} className="border-b border-line/70 last:border-0">{cells(r).map((c, k) => <td key={k} className="py-1 pr-3 align-top"><Inline text={c} /></td>)}</tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           );
         }
