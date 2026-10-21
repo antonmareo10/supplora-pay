@@ -5,7 +5,7 @@ The hosted demo runs with `DEMO_MODE=1`:
 - **No Anthropic key is needed or used.** Claude's invoice readings, agent runs and credit-note emails are replayed from recordings of real runs (`src/data/recorded/`, written by the app itself with `RECORD_DEMO=1`). Even if `ANTHROPIC_API_KEY` is set, demo mode never calls the API.
 - **PayPal is live (sandbox).** Every payout, checkout, vault token, capture and toolkit call hits the PayPal sandbox with the app's own sandbox REST credentials, which stay on the server.
 - **Every visitor gets a private session** (an httpOnly cookie set by `src/proxy.ts`), so judges clicking through at the same time never see each other's invoices or payments. *Reset demo* clears only your own session.
-- Uploads are off; the six bundled sample invoices are the demo.
+- Uploads are off; the seven bundled sample invoices are the demo.
 - PayPal writes are capped per hour per session, per client IP and in total (`src/lib/write-limits.ts`). The per-IP cap reads the client IP from the host's forwarding headers, which some hosts let clients set; the per-session and total caps do not depend on headers.
 
 ## Before deploying: give the sandbox account enough test money
@@ -36,6 +36,7 @@ So use a **dedicated sandbox business account with a large EUR balance** for the
 | `PAYPAL_BASE_URL` | `https://api-m.sandbox.paypal.com` | The app refuses any non-sandbox URL. |
 | `PAYPAL_PAYOUT_RECEIVER_OVERRIDE` | optional sandbox personal email | See step 4 above. |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Vercel: required (Upstash Redis). Render: optional | Session store for serverless, and the demo's payout registry. On Render, without them, sessions and the registry live in process memory and are lost on a restart or deploy (payouts sent before a restart then wait the full 30 days); with them, both survive restarts. `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` also work. |
+| `PAYPAL_WEBHOOK_ID` | optional: the id `scripts/register-webhook.mjs` prints | Turns on `/api/paypal/webhook` (verified webhooks). Unset: the endpoint answers 503; statuses still come from polling and reconciliation. See "PayPal webhooks" below. |
 | `ANTHROPIC_API_KEY` | **leave unset** | Not used in demo mode. |
 | `NODE_VERSION` | `24` (Render) | Node 22.18+ works. |
 
@@ -75,6 +76,23 @@ Serverless functions do not share memory, so a demo session needs a shared store
 
 Limitations on Vercel: the payout registry is in Redis, so every instance sees every batch, but Vercel sends no health-check pings, so sweeps run only when visitors load pages or approve payouts; and the write caps are counted per instance. Rely on a well-funded sandbox account (see above). Concurrent requests for the *same* session on two instances can race; that's fine for one judge clicking through, not for production.
 
+## PayPal webhooks (optional, recommended)
+
+Verified webhooks let PayPal tell each visitor's ledger when a payout item, an authorization or a capture changes (for example the demo housekeeping returning an unclaimed payout, or a capture completing). The endpoint is `POST /api/paypal/webhook`.
+
+1. Register the endpoint with the **same sandbox app** whose credentials the server uses (from your machine, with that app's credentials in the environment):
+
+   ```bash
+   PAYPAL_CLIENT_ID=... PAYPAL_CLIENT_SECRET=... node scripts/register-webhook.mjs https://supplora-pay.vercel.app/api/paypal/webhook
+   # PowerShell: $env:PAYPAL_CLIENT_ID="..."; $env:PAYPAL_CLIENT_SECRET="..."; node scripts/register-webhook.mjs https://supplora-pay.vercel.app/api/paypal/webhook
+   ```
+
+   It subscribes to `PAYMENT.PAYOUTS-ITEM.*`, `PAYMENT.AUTHORIZATION.CREATED/VOIDED` and `PAYMENT.CAPTURE.*`, reuses a webhook that already exists for the URL, and prints only the webhook id. (`--delete <id>` removes it again.)
+2. Set `PAYPAL_WEBHOOK_ID` to that id in the host's environment variables and redeploy.
+3. Check it: `curl -X POST https://<host>/api/paypal/webhook -d '{}'` answers 400 (not a PayPal event) instead of 503. A forged event with made-up PayPal headers gets 401: PayPal itself answers `FAILURE` to the signature check.
+
+How events reach the right visitor: the app indexes every PayPal id it creates (payout batch, order, authorization, capture) with the visitor session that created it, in the same store as the sessions (Redis on Vercel, so every instance sees it). Each event id is processed once; events about payments no session holds are acknowledged and ignored. Statuses only move forward, so a late or repeated event never undoes a newer status, and the ledger shows "updated by webhook" or "updated by reconciliation" next to each PayPal status.
+
 ## Local demo mode (what the hosted demo does)
 
 ```bash
@@ -91,4 +109,6 @@ npm run build
 RECORD_DEMO=1 npx next start -p 3300
 ```
 
-Then click through the demo once: *Review 6 with Claude*, draft the four credit-note emails, *Plan this week's payments*, *Approve & pay*, draft the two paid-invoice emails again, *Let the agent restock*. The app rewrites `src/data/recorded/*.json`. A full recording costs about $0.30–0.40 of Claude usage (invoice readings are reused from `.data/claude-cache` when present).
+Then click through the demo once: *Review 7 with Claude*, draft the four credit-note emails, *Plan this week's payments*, *Approve & pay*, draft the two paid-invoice emails again, *Let the agent restock*. The app rewrites `src/data/recorded/*.json`. A full recording costs about $0.40–0.60 of Claude usage (invoice readings are reused from `.data/claude-cache` when present). The 21 Oct 2026 re-recording (prompt `review-v2`) re-read the seven invoices and re-ran the payment plan; the six earlier invoices read identically, the credit-note emails and the restock run did not need re-recording (their inputs did not change).
+
+Re-render a sample invoice only if you change it (`npm run samples -- <file>.png`): a re-rendered image has different bytes, so its recorded reading no longer replays.
