@@ -86,9 +86,16 @@ export default async function OverviewPage() {
       cta: "Disputes",
     },
     {
-      title: "Restock within your limit",
-      status: restockDone ? `${s.ordersCount} order${s.ordersCount === 1 ? "" : "s"} paid via PayPal` : `${low.length} items below par`,
-      done: restockDone,
+      title: "Restock, pay only for what arrives",
+      status:
+        s.ordersHeldCents > 0
+          ? `${fmt(s.ordersHeldCents)} authorized · waiting for the delivery note`
+          : s.ordersCount > 0
+            ? `${fmt(s.ordersCents)} captured for what arrived${s.ordersReleasedCents ? ` · ${fmt(s.ordersReleasedCents)} released` : ""}`
+            : restockDone
+              ? "Approved"
+              : `${low.length} items below par`,
+      done: restockDone && s.ordersHeldCents === 0,
       href: "/reorder",
       cta: "Reorder",
     },

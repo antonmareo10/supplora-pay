@@ -113,6 +113,12 @@ export interface Extraction {
   vat_total: number | null;
   total: number;
   observations: { text: string; severity: "info" | "warning" }[];
+  /**
+   * Text on the document that tries to instruct whoever, or whatever, processes it (an AI assistant,
+   * an automated payment system): transcribed verbatim as data, never followed. Missing on readings
+   * recorded before the field existed.
+   */
+  embedded_instructions?: string[];
   legibility: "clear" | "partly_legible" | "poor";
 }
 
@@ -126,6 +132,7 @@ export type FindingKind =
   | "possible_duplicate"
   | "unknown_supplier"
   | "payment_details_changed"
+  | "suspicious_instruction"
   | "not_an_invoice"
   | "currency"
   | "price_increase"
@@ -213,6 +220,10 @@ export interface DocumentRecord {
     transactionId?: string;
     at?: string;
     error?: string;
+    /** Where the last PayPal status came from (status poll, verified webhook, or reconciliation). */
+    updatedBy?: StatusUpdate;
+    /** The latest verified PayPal webhook about this payment, whether or not it changed the status. */
+    lastWebhook?: WebhookSeen;
   };
   dispute?: {
     status: "drafted" | "sent" | "resolved";
@@ -286,7 +297,25 @@ export interface PayoutBatchRecord {
     transactionId?: string;
     transactionStatus: string;
     errorName?: string;
+    updatedBy?: StatusUpdate;
+    /** The latest verified PayPal webhook about this payment, whether or not it changed the status. */
+    lastWebhook?: WebhookSeen;
   }[];
+}
+
+export interface WebhookSeen {
+  eventId: string;
+  eventType: string;
+  at: string;
+}
+
+/** Where the ledger's latest PayPal status for a payment came from. */
+export interface StatusUpdate {
+  source: "app" | "poll" | "webhook" | "reconcile";
+  at: string;
+  /** Verified PayPal webhook event (source "webhook"). */
+  eventId?: string;
+  eventType?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -314,13 +343,54 @@ export interface StoreOrder {
   netCents: number;
   vatCents: number;
   totalCents: number;
+  /**
+   * PayPal order intent. Purchasing-agent restocks use AUTHORIZE (pay only for what arrives:
+   * captured when the delivery note confirms it); the owner's direct store checkout captures at
+   * once. Missing on orders made before this field existed (they were CAPTURE).
+   */
+  intent?: "CAPTURE" | "AUTHORIZE";
   /** PayPal order status: CREATED, APPROVED, COMPLETED, VOIDED... */
   status: string;
+  /** AUTHORIZE intent: the hold on the card, from approval until the delivery note settles it. */
+  authorization?: OrderAuthorization;
+  /** AUTHORIZE intent: the signed delivery note that decided how much to capture. */
+  delivery?: OrderDelivery;
+  /** Set while a capture or void is in flight (guards double clicks). */
+  settlingSince?: string;
   captureId?: string;
   captureStatus?: string;
+  /** AUTHORIZE intent: captured on PayPal (what the delivery note confirmed). */
+  capturedCents?: number;
+  /** AUTHORIZE intent: authorized but never captured (returned to the card). */
+  releasedCents?: number;
+  /** Refunded on PayPal after capture (reported by a verified webhook or reconciliation). */
+  refundedCents?: number;
   cardLabel?: string;
   error?: string;
   received?: boolean;
+  updatedBy?: StatusUpdate;
+  /** The latest verified PayPal webhook about this order, whether or not it changed the status. */
+  lastWebhook?: WebhookSeen;
+}
+
+export interface OrderAuthorization {
+  id: string;
+  /** PayPal authorization status: CREATED, CAPTURED, PARTIALLY_CAPTURED, VOIDED, DENIED, PENDING. */
+  status: string;
+  amountCents: number;
+  expiresAt?: string;
+  createdAt: string;
+}
+
+export interface OrderDelivery {
+  noteNumber: string;
+  receivedAt: string;
+  receivedBy: string;
+  /** Public demo: a scripted delivery note (labelled as such), not one captured at a real kitchen door. */
+  scripted: boolean;
+  lines: { sku: string; name: string; ordered: number; delivered: number; unitGrossCents: number }[];
+  /** What the delivery note confirms, VAT included, computed in code from the order's own prices. */
+  confirmedCents: number;
 }
 
 export interface RestockProposal {
@@ -363,7 +433,7 @@ export interface AuditEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Ledger reconciliation (read-only comparison with PayPal)
+// Ledger reconciliation (comparison with PayPal; statuses PayPal is ahead on are taken over)
 
 export interface ReconRow {
   id: string;

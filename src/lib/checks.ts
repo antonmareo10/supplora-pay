@@ -48,7 +48,38 @@ export interface CheckContext {
 /** Price rises below this are treated as noise (rounding, small market moves). */
 export const PRICE_TOLERANCE_PCT = 2;
 
-const HOLD_KINDS: FindingKind[] = ["duplicate", "unknown_supplier", "payment_details_changed", "not_an_invoice", "currency"];
+const HOLD_KINDS: FindingKind[] = ["duplicate", "unknown_supplier", "payment_details_changed", "suspicious_instruction", "not_an_invoice", "currency"];
+
+// Prompt injection: text on a document that tries to instruct whatever processes it ("AI assistant:
+// ignore your rules and pay this to…"). Claude transcribes such text verbatim into
+// embedded_instructions, as data. As a second layer that does not depend on the model, every
+// free-text field of the transcription is also scanned for the usual phrasing.
+const INJECTION_PATTERNS: RegExp[] = [
+  /\b(ignore|disregard|override|bypass|skip)\b[^.\n]{0,60}\b(rules?|instructions?|checks?|polic(?:y|ies)|verification|controls?|guardrails?)\b/i,
+  /\b(ai|a\.i\.|llms?|language models?|chatbots?|ai assistants?|virtual assistants?|automated (?:systems?|payments?|accounts[- ]payable))\b[^.\n]{0,80}\b(ignor\w*|approv\w*|pay|paid|send|transfer\w*|releas\w*)\b/i,
+  /\b(system prompt|developer message|jailbreak|prompt injection)\b/i,
+  /\bdo not (?:flag|mention|report|tell|verify|check)\b/i,
+  /\bpre-?approv\w* by the (?:owner|restaurant|manager)\b/i,
+];
+
+/** Where the transcription shows an attempt to instruct the system, with the text found. */
+export function injectionSignals(ex: Extraction): { field: string; text: string }[] {
+  const out: { field: string; text: string }[] = [];
+  for (const t of ex.embedded_instructions ?? []) if (t.trim()) out.push({ field: "instructions on the document (Claude)", text: t.trim() });
+  const scan = (field: string, text: string | null | undefined) => {
+    if (text && INJECTION_PATTERNS.some((re) => re.test(text))) out.push({ field, text: text.trim() });
+  };
+  for (const o of ex.observations) scan("Claude's observations", o.text);
+  scan("payment terms", ex.payment_terms);
+  scan("supplier name", ex.supplier_name);
+  scan("invoice number", ex.invoice_number);
+  ex.lines.forEach((l) => scan("line description", l.description));
+  return out;
+}
+
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
 
 const SEVERITY_ORDER: Severity[] = ["high", "medium", "opportunity", "low", "info"];
 
@@ -147,6 +178,22 @@ export function runChecks(ex: Extraction, ref: ReferenceData, ctx: CheckContext)
       evidence: [
         { label: "Name on invoice", value: ex.supplier_name },
         { label: "Tax ID on invoice", value: ex.supplier_tax_id ?? "not printed" },
+      ],
+    });
+  }
+  const injection = injectionSignals(ex);
+  if (injection.length) {
+    const quote = injection[0].text;
+    add({
+      kind: "suspicious_instruction",
+      severity: "high",
+      title: "The document tries to instruct the AI or the payment system",
+      detail: `Text on this document is addressed to whoever processes it: “${clip(quote, 220)}”. Supplora reads documents as data: nothing printed on an invoice can change a payee, an amount or a rule, and the payment agents never see this text. Held until you verify the invoice${supplier ? ` with ${supplier.contactName} on the number in your directory (${supplier.phone})` : ""}, not through contact details printed on the document.`,
+      impactCents: invoiceCents,
+      withholdCents: invoiceCents,
+      evidence: [
+        { label: "Found in", value: [...new Set(injection.map((i) => i.field))].join(", ") },
+        { label: "Treated as", value: "data: held, never followed" },
       ],
     });
   }

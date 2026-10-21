@@ -8,6 +8,7 @@ import { toDecimalString } from "./money";
 import { currentClientIp, currentStateKey, demoMode } from "./session";
 import { audit, readState, updateState } from "./state";
 import type { AuditEntry, CartLine } from "./types";
+import { verificationBody, type WebhookHeaders } from "./webhook-events";
 import { WriteLimiter } from "./write-limits";
 
 const SANDBOX = "https://api-m.sandbox.paypal.com";
@@ -118,6 +119,8 @@ async function request<T>(opts: {
   resourceId?: (json: T) => string | undefined;
   /** Demo housekeeping calls are not counted against the visitor's write limit. */
   housekeeping?: boolean;
+  /** A body that must reach PayPal byte for byte (webhook verification embeds the raw event). */
+  rawBody?: string;
 }): Promise<T> {
   const doFetch = async (token: string) =>
     fetch(`${baseUrl()}${opts.path}`, {
@@ -129,7 +132,7 @@ async function request<T>(opts: {
         Prefer: "return=representation",
         ...(opts.requestId ? { "PayPal-Request-Id": opts.requestId } : {}),
       },
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      body: opts.rawBody ?? (opts.body === undefined ? undefined : JSON.stringify(opts.body)),
       signal: AbortSignal.timeout(30_000),
     });
 
@@ -322,8 +325,25 @@ export interface OrderResponse {
   id: string;
   status: string;
   purchase_units?: {
-    payments?: { captures?: { id: string; status: string; amount?: { value: string } }[] };
+    payments?: {
+      captures?: { id: string; status: string; amount?: { value: string } }[];
+      authorizations?: AuthorizationResponse[];
+    };
   }[];
+}
+
+export interface AuthorizationResponse {
+  id: string;
+  status: string;
+  amount?: { value: string; currency_code?: string };
+  expiration_time?: string;
+}
+
+export interface CaptureResponse {
+  id: string;
+  status: string;
+  amount?: { value: string; currency_code?: string };
+  final_capture?: boolean;
 }
 
 export function cartTotals(lines: CartLine[]) {
@@ -338,6 +358,8 @@ export async function createOrder(input: {
   lines: CartLine[];
   ref: AuditEntry["ref"];
   source: "agent" | "owner";
+  /** AUTHORIZE: hold now, capture what the delivery note confirms. CAPTURE: take the money at approval. */
+  intent: "CAPTURE" | "AUTHORIZE";
 }): Promise<OrderResponse> {
   const t = cartTotals(input.lines);
   const eur = (cents: number) => ({ currency_code: "EUR", value: toDecimalString(cents) });
@@ -345,12 +367,12 @@ export async function createOrder(input: {
     method: "POST",
     path: "/v2/checkout/orders",
     requestId: `order-${input.localId}`,
-    label: `${input.source === "agent" ? "Agent" : "Owner"} checkout created at ${input.storeName}`,
+    label: `${input.source === "agent" ? "Agent" : "Owner"} checkout created at ${input.storeName}${input.intent === "AUTHORIZE" ? " (intent AUTHORIZE: pay for what arrives)" : ""}`,
     ref: input.ref,
     amountCents: t.totalCents,
     resourceId: (j) => `${j.id} · ${j.status}`,
     body: {
-      intent: "CAPTURE",
+      intent: input.intent,
       purchase_units: [
         {
           reference_id: input.localId,
@@ -403,4 +425,98 @@ export async function captureOrder(orderId: string, ref: AuditEntry["ref"], atte
 
 export function firstCapture(order: OrderResponse) {
   return order.purchase_units?.[0]?.payments?.captures?.[0];
+}
+
+export function firstAuthorization(order: OrderResponse) {
+  return order.purchase_units?.[0]?.payments?.authorizations?.[0];
+}
+
+// ---------------------------------------------------------------------------
+// Authorize now, capture what arrives (Orders v2 + Payments v2)
+
+/** Places the hold on the card for an approved AUTHORIZE-intent order. Owner approval only. */
+export async function authorizeOrder(orderId: string, ref: AuditEntry["ref"], attempt: string, amountCents: number): Promise<OrderResponse> {
+  return request<OrderResponse>({
+    method: "POST",
+    path: `/v2/checkout/orders/${encodeURIComponent(orderId)}/authorize`,
+    requestId: `authorize-${orderId}-${attempt}`,
+    label: "Order authorized on the card on file (nothing captured until the delivery note)",
+    ref,
+    amountCents,
+    resourceId: (j) => {
+      const a = firstAuthorization(j);
+      return a ? `${j.id} · authorization ${a.id} ${a.status}` : `${j.id} · ${j.status}`;
+    },
+    body: {},
+  });
+}
+
+const AUTH_ID = /^[A-Z0-9]{10,30}$/;
+
+/**
+ * Captures what the delivery note confirmed and closes the authorization (final_capture: PayPal
+ * releases the rest). The request id is derived from the authorization, so a retry or a double
+ * click can never capture twice; PayPal also refuses a second capture once the final one exists.
+ */
+export async function captureAuthorization(input: { authorizationId: string; amountCents: number; invoiceId: string; note: string; ref: AuditEntry["ref"] }): Promise<CaptureResponse> {
+  if (!AUTH_ID.test(input.authorizationId)) throw new PayPalError("Invalid authorization id", 400);
+  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) throw new PayPalError("Capture amount must be positive", 400);
+  return request<CaptureResponse>({
+    method: "POST",
+    path: `/v2/payments/authorizations/${input.authorizationId}/capture`,
+    requestId: `settle-${input.authorizationId}`,
+    label: "Captured what the delivery note confirmed (final capture: the rest of the authorization is released)",
+    ref: input.ref,
+    amountCents: input.amountCents,
+    resourceId: (j) => `${input.authorizationId} → capture ${j.id} ${j.status}`,
+    body: {
+      amount: { currency_code: "EUR", value: toDecimalString(input.amountCents) },
+      final_capture: true,
+      invoice_id: input.invoiceId.slice(0, 127),
+      note_to_payer: input.note.slice(0, 255),
+    },
+  });
+}
+
+/** Nothing arrived: release the whole hold. */
+export async function voidAuthorization(authorizationId: string, ref: AuditEntry["ref"], amountCents: number): Promise<AuthorizationResponse> {
+  if (!AUTH_ID.test(authorizationId)) throw new PayPalError("Invalid authorization id", 400);
+  const res = await request<Partial<AuthorizationResponse>>({
+    method: "POST",
+    path: `/v2/payments/authorizations/${authorizationId}/void`,
+    requestId: `void-${authorizationId}`,
+    label: "Authorization voided: nothing arrived, the whole hold is released",
+    ref,
+    amountCents,
+    resourceId: (j) => `${authorizationId} · ${j.status ?? "VOIDED"}`,
+  });
+  // PayPal answers 204 (empty) or the authorization (Prefer: return=representation).
+  return { id: res.id ?? authorizationId, status: res.status ?? "VOIDED", amount: res.amount, expiration_time: res.expiration_time };
+}
+
+export async function getAuthorization(authorizationId: string, ref: AuditEntry["ref"]): Promise<AuthorizationResponse> {
+  if (!AUTH_ID.test(authorizationId)) throw new PayPalError("Invalid authorization id", 400);
+  return request<AuthorizationResponse>({
+    method: "GET",
+    path: `/v2/payments/authorizations/${authorizationId}`,
+    label: "Authorization status checked",
+    ref,
+    resourceId: (j) => `${j.id} · ${j.status}`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Webhooks: PayPal verifies its own signature (postback). The raw event is embedded byte for byte
+// (see verificationBody), because re-serialising the parsed JSON can change it.
+
+export async function verifyWebhookSignature(h: WebhookHeaders, webhookId: string, rawEvent: string, eventLabel: string): Promise<boolean> {
+  const res = await request<{ verification_status?: string }>({
+    method: "POST",
+    path: "/v1/notifications/verify-webhook-signature",
+    label: `Webhook signature check: ${eventLabel}`,
+    housekeeping: true,
+    rawBody: verificationBody(h, webhookId, rawEvent),
+    resourceId: (j) => j.verification_status,
+  });
+  return res.verification_status === "SUCCESS";
 }

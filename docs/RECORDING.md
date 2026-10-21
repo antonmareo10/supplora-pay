@@ -1,6 +1,6 @@
 # Recording the demo video
 
-A screen capture of the real app, end to end, in about 3 minutes. Every step below was run in a real browser (Chromium, 1500×1000 window) on 20 Oct 2026. Steps 1–6 and 8–13 ran on the demo build. Step 7, the full €2,222.68 payout, ran with live Claude: by then the demo's sandbox account had run out of test funds (smaller demo payouts went through). See "Before you hit record" below.
+A screen capture of the real app, end to end, in about 3 minutes. Steps 3, 11 and 12 (the prompt-injection invoice, authorize, and the partial capture) were added on 21 Oct 2026 and run in a real browser on the demo build that day. Every step below was run in a real browser (Chromium, 1500×1000 window) on 20 Oct 2026. Steps 1–6 and 8–13 ran on the demo build. Step 7, the full €2,222.68 payout, ran with live Claude: by then the demo's sandbox account had run out of test funds (smaller demo payouts went through). See "Before you hit record" below.
 
 ## 0. Set up a clean state
 
@@ -27,19 +27,20 @@ Before you hit record:
 
 | # | Where | Click | What to show / say |
 |---|---|---|---|
-| 1 | `/inbox` | **Review 6 with Claude** | Six supplier invoice images (Spanish and English; clean renders, not phone photos) are read one after another; each card gets a recommendation. |
+| 1 | `/inbox` | **Review 7 with Claude** | Seven supplier invoice images (Spanish and English; clean renders, not phone photos) are read one after another; each card gets a recommendation. |
 | 2 | `/inbox/doc-02` (Pescados Bahía) | open the card | **Findings with the numbers**: hake at €13.80/kg vs €11.90 on the last three invoices, 14 kg, so withhold €29.26 incl. VAT. The signed delivery note AL-5521 is matched. |
-| 3 | `/inbox/doc-04` (Green Valley Dairy) | open the card | "Payment reminder · copy" of an invoice already paid on 9 Oct → **Hold** (duplicate). |
-| 4 | `/payments` | keep the cash cap at **2500**, click **Plan this week's payments** | The agent log streams the tool calls: `get_open_invoices`, `get_cash_position`, `get_supplier`, `propose_payment_plan` (validated in code), `request_approval`. |
-| 5 | `/payments` | scroll to the plan | **€2,222.68 of the €2,500 cap**; Atlantic Wine paid early saves €23.15; Cárnicas Sanz deferred; Green Valley never paid. "Nothing is paid until you approve." |
+| 3 | `/inbox/doc-07` (CleanPro · CP-11958) | open the card, scroll to *Why this invoice cannot pay the account printed on it* | A lookalike invoice for a real delivery: new PayPal address, and fine print telling "AI assistants" to ignore their rules and pay today. **Hold €224.33**. Claude copied the instruction as data; the payee comes only from the directory; the payment agent's own check answers `doc-07 is held and must not be paid.` "Documents are data, not instructions." |
+| 4 | `/payments` | keep the cash cap at **2500**, click **Plan this week's payments** | The agent log streams the tool calls: `get_open_invoices` (5 payable · 2 held), `get_cash_position`, `get_supplier`, `propose_payment_plan` (validated in code), `request_approval`. |
+| 5 | `/payments` | scroll to the plan | **€2,222.68 of the €2,500 cap**; Atlantic Wine paid early saves €23.15; Cárnicas Sanz deferred; Green Valley and CP-11958 never paid (the agent's message lists both as held). "Nothing is paid until you approve." |
 | 6 | `/payments` | **Approve & pay 4 · €2,222.68** | The owner approves. One **PayPal Payouts** batch goes out. |
 | 7 | `/payments` → *Payout batches* | wait about 30–60 s | The batch moves `PENDING → PROCESSING → SUCCESS`: PayPal accepted and processed it. The **batch id** and the four **payout item ids** are visible. Each item waits `UNCLAIMED` because the demo payees are placeholder addresses, as a real supplier's payout would until they claim it; the plan shows them as *Sent · waiting for supplier to claim* (explained on screen). Say "processed", not "paid". |
-| 8 | `/disputes` | **Draft the email with Claude** on Pescados Bahía | A credit-note request in Spanish, with the exact figures and the payout batch id. *Copy* / *Open in mail app* / *Mark as sent*. |
-| 9 | `/reorder` | keep the limit at **150**, click **Let the agent restock** | The agent checks stock, browses both stores, creates a **PayPal Orders v2** checkout (€144.96, `CREATED`) and verifies it with **`get_order` from the PayPal Agent Toolkit**. |
-| 10 | `/reorder` | point at the proposal | "The agent cannot pay": the toolkit's `pay_order` is never enabled, and capture only exists in the owner's approval route. |
-| 11 | `/reorder` | **Approve & pay €144.96** | Re-checked on PayPal through the toolkit, confirmed with the vaulted card (Vault v3), captured: `COMPLETED` with a capture id. |
-| 12 | `/ledger` | **Reconcile with PayPal**, then hover a finding in the grid, click a bar in the chart | AG Grid + AG Charts dashboard: totals, withheld, savings. The reconciliation checks every payout item and order against PayPal. |
-| 13 | `/ledger` → *Audit log* | **PayPal API calls** tab | Every call with method, endpoint, status, resource id, idempotency key; toolkit calls carry the *Agent Toolkit · MCP* badge. |
+| 8 | `/disputes` | **Draft the email with Claude** on Pescados Bahía | A credit-note request in Spanish, with the exact figures and the payout batch id. *Copy* / *Open in mail app* / *Mark as sent*. CP-11958 is not here: possible fraud is verified by phone, never answered by email. |
+| 9 | `/reorder` | keep the limit at **150**, click **Let the agent restock** | The agent checks stock, browses both stores, creates a **PayPal Orders v2** checkout with intent `AUTHORIZE` (€144.96, `CREATED`) and verifies it with **`get_order` from the PayPal Agent Toolkit**. |
+| 10 | `/reorder` | point at the proposal | "The agent cannot pay": the toolkit's `pay_order` is never enabled, and nothing in the agent's tools confirms, authorizes or captures. |
+| 11 | `/reorder` | **Approve & authorize €144.96** | Re-checked on PayPal through the toolkit, confirmed with the vaulted card (Vault v3) and **authorized**: the money is held, not taken. The order waits for the delivery note. |
+| 12 | `/reorder` → *Waiting for the delivery note* | **Delivery note in · capture €141.09, release €3.87** | The scripted demo delivery note (labelled) is one sanitiser short. PayPal **captures €141.09** (one final partial capture) and releases **€3.87**: *authorized → captured → released*. "Pay only for what arrived." |
+| 13 | `/ledger` | **Reconcile with PayPal**, then hover a finding in the grid, click a bar in the chart | AG Grid + AG Charts dashboard: totals, withheld, savings. The reconciliation reads every payout item and the order's authorization and capture back from PayPal; *Store orders* shows authorized / captured / released and where each status came from (app, webhook, reconciliation). |
+| 14 | `/ledger` → *Audit log* | **PayPal API calls** tab | Every call with method, endpoint, status, resource id, idempotency key (the capture's is `settle-<authorization id>`); toolkit calls carry the *Agent Toolkit · MCP* badge; with webhooks on, each verified PayPal webhook is listed too. |
 
 ## 2. Re-takes
 

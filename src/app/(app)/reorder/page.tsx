@@ -13,6 +13,7 @@ import { claudeAvailable, claudeMode } from "@/lib/claude";
 import { fmtDateTime } from "@/lib/dates";
 import { fmt } from "@/lib/money";
 import { paypalConfigured } from "@/lib/paypal";
+import { orderApproved, orderPhase } from "@/lib/settlement";
 import { readState } from "@/lib/state";
 
 export const metadata: Metadata = { title: "Reorder" };
@@ -23,7 +24,9 @@ export default async function ReorderPage() {
   const low = lowStock(state);
   const active = [...state.proposals].reverse().find((p) => ["awaiting_approval", "paying", "failed"].includes(p.status));
   const activeOrders = active ? state.orders.filter((o) => active.orderIds.includes(o.id)) : [];
-  const history = [...state.orders].reverse().filter((o) => !active?.orderIds.includes(o.id) && o.status === "COMPLETED");
+  const approved = [...state.orders].reverse().filter((o) => !active?.orderIds.includes(o.id) && orderApproved(o));
+  const awaitingDelivery = approved.filter((o) => ["authorized", "settling"].includes(orderPhase(o)));
+  const history = approved.filter((o) => !awaitingDelivery.includes(o));
   const card = state.cardOnFile ? `${state.cardOnFile.brand} •••• ${state.cardOnFile.last4}` : null;
   const ready = claudeAvailable() && paypalConfigured();
 
@@ -31,7 +34,8 @@ export default async function ReorderPage() {
     <div className="space-y-10">
       <PageHeader kicker="Reorder · agentic commerce" title="Restock without the phone calls">
         The purchasing agent checks stock against par levels, browses your suppliers&apos; online stores and creates PayPal checkouts within the
-        spending limit you set. It cannot pay: you approve, and the order is paid with the restaurant&apos;s card on file.
+        spending limit you set. It cannot pay: your approval puts a hold on the restaurant&apos;s card on file, and PayPal captures only what the
+        signed delivery note confirms.
       </PageHeader>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
@@ -153,9 +157,25 @@ export default async function ReorderPage() {
         </section>
       )}
 
+      {awaitingDelivery.length > 0 && (
+        <section aria-labelledby="deliveries" className="space-y-4">
+          <SectionTitle
+            id="deliveries"
+            kicker="Authorized · PayPal Payments v2"
+            title="Waiting for the delivery note"
+            aside={<Pill tone="saffron">{awaitingDelivery.length} on hold</Pill>}
+          />
+          <div className="grid gap-4 md:grid-cols-2">
+            {awaitingDelivery.map((o) => (
+              <OrderCard key={o.id} order={o} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {history.length > 0 && (
         <section aria-labelledby="orders" className="space-y-4">
-          <SectionTitle id="orders" kicker="PayPal Orders v2" title="Paid orders" aside={<Pill tone="olive">{history.length} paid</Pill>} />
+          <SectionTitle id="orders" kicker="PayPal Orders v2" title="Settled orders" aside={<Pill tone="olive">{history.length} settled</Pill>} />
           <div className="grid gap-4 md:grid-cols-2">
             {history.map((o) => (
               <OrderCard key={o.id} order={o} />

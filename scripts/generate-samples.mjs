@@ -1,7 +1,11 @@
-// Renders the six sample supplier invoices to PNG (A4 at 150 dpi) with headless
+// Renders the sample supplier invoices to PNG (A4 at 150 dpi) with headless
 // Chrome/Edge. The PNGs are committed, so you only need this to change them:
 //
-//   npm run samples
+//   npm run samples                                  (all of them)
+//   npm run samples -- 07-cleanpro-new-payee.png     (only the files named)
+//
+// Re-rendering a sample changes its bytes, so its recorded Claude reading (checked by SHA-256)
+// must be recorded again: render only the files you changed.
 //
 // Set CHROME_PATH if Chrome/Edge is not in a standard location.
 
@@ -163,6 +167,8 @@ function render(inv) {
     .pay { margin-top: 60px; padding: 18px 22px; background: #f6f6f2; border-left: 5px solid ${inv.accent}; font-size: 16.5px; line-height: 1.55; }
     .terms { margin-top: 16px; font-size: 16.5px; }
     .foot { position: absolute; bottom: 70px; left: 96px; right: 96px; text-align: center; font-size: 13.5px; color: #888; border-top: 1px solid #ddd; padding-top: 14px; }
+    .notice { margin-top: 10px; font-weight: 700; }
+    .fine { margin-top: 26px; font-size: 15px; line-height: 1.45; color: #8a8a8a; }
     .stamp { position: absolute; top: 1240px; left: 140px; transform: rotate(-9deg); border: 5px double #c0392b; color: #c0392b; font: 700 30px 'Arial Black', Arial, sans-serif; padding: 12px 26px; letter-spacing: 2px; opacity: 0.82; border-radius: 6px; }
   </style></head><body>
     <div class="top">
@@ -202,7 +208,8 @@ function render(inv) {
       <tr class="grand"><td>${L.total}</td><td class="r">${money(t.total, inv.language)}</td></tr>
     </table></div>
     <div class="terms"><b>${L.terms}:</b> ${esc(inv.terms)}</div>
-    <div class="pay">${esc(inv.payment)}</div>
+    <div class="pay">${esc(inv.payment)}${inv.notice ? `<div class="notice">${esc(inv.notice)}</div>` : ""}</div>
+    ${inv.finePrint ? `<div class="fine">${esc(inv.finePrint)}</div>` : ""}
     <div class="foot">${esc(inv.footer)}</div>
   </body></html>`;
 }
@@ -212,7 +219,11 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "supplora-samples-"));
 const profile = path.join(tmp, "profile");
 fs.mkdirSync(outDir, { recursive: true });
 
-for (const inv of SAMPLE_INVOICES) {
+const only = process.argv.slice(2);
+const unknown = only.filter((f) => !SAMPLE_INVOICES.some((inv) => inv.file === f));
+if (unknown.length) throw new Error(`No sample named ${unknown.join(", ")}`);
+
+for (const inv of SAMPLE_INVOICES.filter((i) => !only.length || only.includes(i.file))) {
   const htmlPath = path.join(tmp, inv.file.replace(/\.png$/, ".html"));
   fs.writeFileSync(htmlPath, render(inv), "utf8");
   const out = path.join(outDir, inv.file);

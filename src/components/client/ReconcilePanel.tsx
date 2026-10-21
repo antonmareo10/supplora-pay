@@ -1,6 +1,6 @@
 "use client";
 
-// "Reconcile with PayPal": read-only comparison of the ledger with PayPal (see lib/reconcile.ts).
+// "Reconcile with PayPal": compares the ledger with PayPal and takes over statuses PayPal is ahead on (see lib/reconcile.ts).
 
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
@@ -38,10 +38,11 @@ export function ReconcilePanel({ last, hasPayments }: { last: Reconciliation | n
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <p className="max-w-2xl text-sm leading-relaxed text-ink-2">
-          Read-only check of every euro against PayPal: each store order is re-read with <strong className="font-semibold text-ink">get_order</strong> and the
+          A check of every euro against PayPal: each store order is re-read with <strong className="font-semibold text-ink">get_order</strong> and the
           account&rsquo;s history with <strong className="font-semibold text-ink">list_transactions</strong>, both through the official{" "}
           <strong className="font-semibold text-ink">PayPal Agent Toolkit</strong> (MCP); payout batches through the REST Payouts API, which the toolkit does
-          not cover. Mismatches are reported, never &ldquo;fixed&rdquo;.
+          not cover. Where PayPal is ahead on a status (a payout claimed or returned, an authorization voided, a capture refunded) the ledger takes
+          PayPal&rsquo;s status and says the reconciliation updated it; amount mismatches are reported, never &ldquo;fixed&rdquo;.
         </p>
         <button type="button" onClick={run} disabled={busy || !hasPayments} className={buttonClass("ghost")}>
           <IconRefresh size={15} className={busy ? "animate-spin" : undefined} />

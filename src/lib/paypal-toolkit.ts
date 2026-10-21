@@ -88,22 +88,44 @@ function summarize(name: ToolkitToolName, r: ToolkitResult): string {
   if (!r.ok) return `${name} failed: ${r.error}`;
   if (name === "get_order") {
     const o = orderFacts(r.data);
-    return `${o.id} · ${o.status}${o.amountCents != null ? ` · ${o.currency} ${(o.amountCents / 100).toFixed(2)}` : ""}${o.captureId ? ` · capture ${o.captureId}` : ""}`;
+    return `${o.id} · ${o.status}${o.amountCents != null ? ` · ${o.currency} ${(o.amountCents / 100).toFixed(2)}` : ""}${o.authorizationId ? ` · authorization ${o.authorizationId} ${o.authorizationStatus}` : ""}${o.captureId ? ` · capture ${o.captureId}` : ""}`;
   }
   const n = Array.isArray(r.data.transaction_details) ? r.data.transaction_details.length : 0;
   return `${n} transaction${n === 1 ? "" : "s"}`;
 }
 
-/** Status, amount and first capture of an order as returned by get_order. */
+/** Status, amount, authorization and captures of an order as returned by get_order. */
 export function orderFacts(data: Record<string, unknown>) {
-  const pu = (data.purchase_units as { amount?: { value?: string; currency_code?: string }; payments?: { captures?: { id: string; status: string }[] } }[] | undefined)?.[0];
+  type Money = { value?: string; currency_code?: string };
+  const pu = (
+    data.purchase_units as
+      | {
+          amount?: Money;
+          payments?: { captures?: { id: string; status: string; amount?: Money }[]; authorizations?: { id: string; status: string; amount?: Money }[] };
+        }[]
+      | undefined
+  )?.[0];
+  const money = (m?: Money) => {
+    try {
+      return m?.value ? fromDecimalString(m.value) : null;
+    } catch {
+      return null;
+    }
+  };
+  const captures = pu?.payments?.captures ?? [];
+  const auth = pu?.payments?.authorizations?.[0];
   return {
     id: String(data.id ?? ""),
     status: String(data.status ?? ""),
-    amountCents: pu?.amount?.value ? fromDecimalString(pu.amount.value) : null,
+    intent: typeof data.intent === "string" ? data.intent : undefined,
+    amountCents: money(pu?.amount),
     currency: pu?.amount?.currency_code ?? "",
-    captureId: pu?.payments?.captures?.[0]?.id,
-    captureStatus: pu?.payments?.captures?.[0]?.status,
+    captureId: captures[0]?.id,
+    captureStatus: captures[0]?.status,
+    capturedCents: captures.length ? captures.reduce((s, c) => s + (money(c.amount) ?? 0), 0) : null,
+    authorizationId: auth?.id,
+    authorizationStatus: auth?.status,
+    authorizationCents: money(auth?.amount),
   };
 }
 

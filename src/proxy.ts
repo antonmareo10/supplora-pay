@@ -30,6 +30,6 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Health checks and static files never get a session.
-  matcher: ["/((?!_next/static|_next/image|samples/|icon.svg|favicon.ico|robots.txt|api/health).*)"],
+  // Health checks, PayPal webhooks (server to server) and static files never get a session.
+  matcher: ["/((?!_next/static|_next/image|samples/|icon.svg|favicon.ico|robots.txt|api/health|api/paypal/webhook).*)"],
 };

@@ -6,7 +6,8 @@ import { DecisionControl, DocumentViewer, ReviewButton } from "@/components/clie
 import { IconArrowLeft, IconCheck, IconTruck } from "@/components/icons";
 import { ACTION_TONE, buttonClass, Card, cx, docStatus, ErrorNote, Money, Mono, paymentLabel, Pill, SEVERITY_LABEL, SEVERITY_TONE, SeverityIcon, Stamp } from "@/components/ui";
 import { CATALOG, DELIVERY_NOTES, supplierById } from "@/data/seed";
-import { ACTION_LABEL, effective, isPaidOrSent } from "@/lib/ap";
+import { Guardrails, hasFraudHold } from "@/components/Guardrails";
+import { ACTION_LABEL, effective, HOLD_ONLY_KINDS, isPaidOrSent } from "@/lib/ap";
 import { claudeAvailable, claudeMode } from "@/lib/claude";
 import { businessToday, fmtDay, fmtDateTime, relativeDue } from "@/lib/dates";
 import { fmt, fmtQty, toCents } from "@/lib/money";
@@ -52,7 +53,7 @@ function FindingItem({ f }: { f: Finding }) {
       )}
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted">
         <span>{f.source === "claude" ? "Seen by Claude on the document" : "Rule check, computed in code from Claude's transcription"}</span>
-        {f.withholdCents > 0 && f.kind !== "duplicate" && f.kind !== "unknown_supplier" && f.kind !== "payment_details_changed" && (
+        {f.withholdCents > 0 && !HOLD_ONLY_KINDS.includes(f.kind) && (
           <span className="num font-semibold text-terracotta">Withhold {fmt(f.withholdCents)}</span>
         )}
         {f.severity === "opportunity" && <span className="num font-semibold text-olive">Save {fmt(f.impactCents)}</span>}
@@ -77,7 +78,8 @@ export default async function ReviewPage(props: PageProps<"/inbox/[id]">) {
   const lineFlags = new Map<number, Finding[]>();
   r?.findings.forEach((f) => f.lineIndex != null && lineFlags.set(f.lineIndex, [...(lineFlags.get(f.lineIndex) ?? []), f]));
   const settled = isPaidOrSent(doc);
-  const partialAvailable = !!r && r.findings.some((f) => f.withholdCents > 0 && !["duplicate", "unknown_supplier", "payment_details_changed", "not_an_invoice", "currency"].includes(f.kind));
+  const partialAvailable = !!r && r.findings.some((f) => f.withholdCents > 0 && !HOLD_ONLY_KINDS.includes(f.kind));
+  const fraudHold = !!e && e.action === "hold" && hasFraudHold(doc);
 
   return (
     <div>
@@ -229,6 +231,8 @@ export default async function ReviewPage(props: PageProps<"/inbox/[id]">) {
                   </ul>
                 )}
               </section>
+
+              <Guardrails doc={doc} state={state} />
 
               <Card className="overflow-hidden">
                 <div className="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-5 sm:px-6">
@@ -403,9 +407,11 @@ export default async function ReviewPage(props: PageProps<"/inbox/[id]">) {
 
               {e.action !== "pay_full" && !settled && (
                 <div className="flex flex-wrap gap-2">
-                  <Link href="/disputes" className={buttonClass("ghost")}>
-                    Draft the credit-note request
-                  </Link>
+                  {!fraudHold && (
+                    <Link href="/disputes" className={buttonClass("ghost")}>
+                      Draft the credit-note request
+                    </Link>
+                  )}
                   <Link href="/payments" className={buttonClass("primary")}>
                     Go to the payment run
                   </Link>

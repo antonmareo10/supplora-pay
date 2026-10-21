@@ -166,6 +166,8 @@ export function docStatus(doc: DocumentRecord): { label: string; tone: Tone; ico
       return { label: "Paying…", tone: "ledger" };
     case "failed":
       return { label: "Payment failed", tone: "terracotta" };
+    case "returned":
+      return { label: "Payout returned · unpaid", tone: "saffron" };
   }
   if (doc.reviewStatus === "reviewing") return { label: "Reviewing…", tone: "ledger" };
   if (doc.reviewStatus === "failed") return { label: "Review failed", tone: "terracotta" };
@@ -179,6 +181,7 @@ export function docStatus(doc: DocumentRecord): { label: string; tone: Tone; ico
 /** Plain-words payment status for detail lines (UNCLAIMED is not "paid": PayPal holds it until claimed). */
 export function paymentLabel(status: DocumentRecord["payment"]["status"]): string {
   if (status === "unclaimed") return "sent, awaiting the supplier's claim (PayPal UNCLAIMED)";
+  if (status === "returned") return "payout returned to the restaurant's PayPal balance; the invoice is unpaid";
   return status;
 }
 

@@ -7,6 +7,7 @@ import { IconArrowLeft, IconSpark, IconTruck } from "@/components/icons";
 import { OrderCard } from "@/components/OrderCard";
 import { RESTAURANT, STORE_PRODUCTS, supplierById } from "@/data/seed";
 import { paypalConfigured } from "@/lib/paypal";
+import { orderApproved } from "@/lib/settlement";
 import { readState } from "@/lib/state";
 
 export async function generateMetadata(props: PageProps<"/store/[supplier]">): Promise<Metadata> {
@@ -23,7 +24,7 @@ export default async function StorePage(props: PageProps<"/store/[supplier]">) {
   const products = STORE_PRODUCTS.filter((p) => p.supplierId === id);
   const lowSkus: Record<string, number> = {};
   for (const i of state.inventory) if (i.supplierId === id && i.onHand < i.par) lowSkus[i.sku] = i.par - i.onHand;
-  const orders = [...state.orders].reverse().filter((o) => o.supplierId === id && o.status === "COMPLETED");
+  const orders = [...state.orders].reverse().filter((o) => o.supplierId === id && orderApproved(o));
   const accent = supplier.store.accent;
   const card = state.cardOnFile ? `${state.cardOnFile.brand} •••• ${state.cardOnFile.last4}` : null;
 
@@ -73,7 +74,7 @@ export default async function StorePage(props: PageProps<"/store/[supplier]">) {
             </h2>
             <div className="grid gap-4 md:grid-cols-2">
               {orders.map((o) => (
-                <OrderCard key={o.id} order={o} />
+                <OrderCard key={o.id} order={o} settleEnabled={false} />
               ))}
             </div>
           </section>
