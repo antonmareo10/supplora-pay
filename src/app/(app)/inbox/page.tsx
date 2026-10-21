@@ -39,8 +39,8 @@ export default async function InboxPage() {
       <div className="mb-5">
         {demoMode() ? (
           <p className="rounded-2xl border border-dashed border-line-2 bg-paper/60 px-5 py-4 text-sm text-ink-2">
-            <span className="font-medium text-ink">Uploads are off in the public demo.</span> Nothing here calls Claude: the six sample invoices replay
-            Claude&rsquo;s recorded readings. Run the app with your own Anthropic key (see the README) to read your own invoices.
+            <span className="font-medium text-ink">Uploads are off in the public demo.</span> Nothing here calls Claude: the {docs.filter((d) => d.origin === "sample").length} sample invoices
+            replay Claude&rsquo;s recorded readings. Run the app with your own Anthropic key (see the README) to read your own invoices.
           </p>
         ) : (
           <UploadZone />

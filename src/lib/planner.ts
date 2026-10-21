@@ -11,6 +11,7 @@ import { callTool, replayRun, runLive } from "./agent-run";
 import { anthropic, claudeErrorMessage, claudeMode, MODEL } from "./claude";
 import { addDays, businessToday, daysBetween, fmtDay } from "./dates";
 import { fmt, pctOf, toDecimalString } from "./money";
+import { agentRef, validateProposal, type PlanCandidate } from "./plan-rules";
 import { fingerprint, recordedRun, recordMode } from "./recordings";
 import { auditEntry, newId, readState, updateState } from "./state";
 import type { AgentEvent, AppState, DeferredPayment, DocumentRecord, PaymentPlan, PlannedPayment } from "./types";
@@ -47,8 +48,9 @@ export function openInvoices(state: AppState, today: string): { open: OpenInvoic
     const d = doc.review.discount;
     open.push({
       doc,
-      supplierName: supplierById(doc.review.supplierId)?.name ?? doc.review.extraction.supplier_name,
-      invoiceNumber: doc.review.extraction.invoice_number ?? doc.fileName,
+      // What the agent reads about a document: directory names and plain invoice references only.
+      supplierName: supplierById(doc.review.supplierId)?.name ?? "Supplier not in your directory",
+      invoiceNumber: agentRef(doc.review.extraction.invoice_number) ?? doc.id,
       payableCents: e.payableCents,
       withheldCents: e.withheldCents,
       dueDate: doc.review.dueDate,
@@ -73,6 +75,21 @@ Rules:
 - Priorities: overdue invoices, then invoices due before the next run (earliest first); then early-payment discounts while their window is open (2% for paying ~20 days early is worth more than 30% a year, better than any other use of the cash); then the rest. When the cap does not allow everything, defer invoices that are not due before the next run.
 - Every open invoice must be either paid or deferred, each with a one-sentence reason that cites the exact euros and dates returned by the tools.
 - Write for a busy owner: plain, warm, specific. Before each group of tool calls, write one short sentence (max 15 words) saying what you are checking.`;
+
+/** An open invoice as the plan check (plan-rules.ts) sees it. */
+export function planCandidate(o: OpenInvoice): PlanCandidate {
+  return {
+    docId: o.doc.id,
+    supplierId: o.doc.review!.supplierId!,
+    supplierName: o.supplierName,
+    invoiceNumber: o.invoiceNumber,
+    dueDate: o.dueDate,
+    invoiceCents: o.doc.review!.invoiceCents,
+    withheldCents: o.withheldCents,
+    payableCents: o.payableCents,
+    discountCents: o.discount ? o.discount.amountCents : null,
+  };
+}
 
 /** What a recorded planner run depends on: replay only when this matches exactly. */
 export function plannerFingerprint(state: AppState, today: string): string {
@@ -161,8 +178,8 @@ export async function runPaymentPlanner(emit: Emit, signal?: AbortSignal): Promi
           })),
           held_do_not_pay: held.map((d) => ({
             invoice_id: d.id,
-            supplier: supplierById(d.review!.supplierId)?.name ?? d.review!.extraction.supplier_name,
-            invoice_number: d.review!.extraction.invoice_number,
+            supplier: supplierById(d.review!.supplierId)?.name ?? "Supplier not in your directory",
+            invoice_number: agentRef(d.review!.extraction.invoice_number),
             total_eur: eur(d.review!.invoiceCents),
             reason: d.review!.findings.find((f) => f.severity === "high")?.title ?? d.review!.summary,
           })),
@@ -238,59 +255,12 @@ export async function runPaymentPlanner(emit: Emit, signal?: AbortSignal): Promi
     label: (input) => `Checking a plan with ${input.payments.length} payment${input.payments.length === 1 ? "" : "s"}`,
     run: async (input) => {
       const { open, held } = openInvoices(await readState(), today);
-      const errors: string[] = [];
-      const seen = new Set<string>();
-      const payments: PlannedPayment[] = [];
-      const deferred: DeferredPayment[] = [];
-      for (const p of input.payments) {
-        const o = open.find((x) => x.doc.id === p.invoice_id);
-        if (held.some((h) => h.id === p.invoice_id)) errors.push(`${p.invoice_id} is held and must not be paid.`);
-        else if (!o) errors.push(`${p.invoice_id} is not an open payable invoice.`);
-        if (seen.has(p.invoice_id)) errors.push(`${p.invoice_id} appears more than once.`);
-        seen.add(p.invoice_id);
-        if (!o) continue;
-        if (p.take_early_payment_discount && !o.discount) errors.push(`${o.invoiceNumber} has no early-payment discount available.`);
-        if (!p.reason.trim()) errors.push(`Give a reason for ${o.invoiceNumber}.`);
-        const discountCents = p.take_early_payment_discount && o.discount ? o.discount.amountCents : 0;
-        payments.push({
-          docId: o.doc.id,
-          supplierId: o.doc.review!.supplierId!,
-          supplierName: o.supplierName,
-          invoiceNumber: o.invoiceNumber,
-          dueDate: o.dueDate,
-          invoiceCents: o.doc.review!.invoiceCents,
-          withheldCents: o.withheldCents,
-          discountCents,
-          amountCents: o.payableCents - discountCents,
-          reason: p.reason.trim(),
-          status: "proposed",
-        });
-      }
-      for (const d of input.deferred) {
-        const o = open.find((x) => x.doc.id === d.invoice_id);
-        if (!o) {
-          if (!held.some((h) => h.id === d.invoice_id)) errors.push(`${d.invoice_id} is not an open payable invoice.`);
-          continue;
-        }
-        if (seen.has(d.invoice_id)) errors.push(`${o.invoiceNumber} is both paid and deferred (or listed twice).`);
-        seen.add(d.invoice_id);
-        deferred.push({ docId: o.doc.id, supplierName: o.supplierName, invoiceNumber: o.invoiceNumber, amountCents: o.payableCents, reason: d.reason.trim() });
-      }
-      for (const o of open) if (!seen.has(o.doc.id)) errors.push(`${o.invoiceNumber} (${o.doc.id}) is missing: pay it or defer it.`);
-      const payCents = payments.reduce((s, p) => s + p.amountCents, 0);
-      if (payCents > capCents) errors.push(`Total ${fmt(payCents)} exceeds the cash cap of ${fmt(capCents)} by ${fmt(payCents - capCents)}.`);
-      if (!payments.length && open.length) errors.push("The plan pays nothing although invoices are open.");
+      const { errors, payments, deferred, totals } = validateProposal(input, open.map(planCandidate), held.map((h) => h.id), capCents);
+      const payCents = totals.payCents;
       if (errors.length) {
         draft = null;
         return { summary: `${errors.length} issue${errors.length === 1 ? "" : "s"} to fix`, result: { ok: false, errors }, error: true };
       }
-      const totals = {
-        payCents,
-        discountCents: payments.reduce((s, p) => s + p.discountCents, 0),
-        withheldCents: payments.reduce((s, p) => s + p.withheldCents, 0),
-        deferredCents: deferred.reduce((s, d) => s + d.amountCents, 0),
-        headroomCents: capCents - payCents,
-      };
       draft = { payments, deferred, summary: input.summary.trim(), totals };
       return {
         summary: `Valid: pay ${fmt(payCents)} of ${fmt(capCents)} cap${totals.discountCents ? ` · saves ${fmt(totals.discountCents)}` : ""}`,

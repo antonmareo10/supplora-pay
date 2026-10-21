@@ -113,6 +113,12 @@ export interface Extraction {
   vat_total: number | null;
   total: number;
   observations: { text: string; severity: "info" | "warning" }[];
+  /**
+   * Text on the document that tries to instruct whoever, or whatever, processes it (an AI assistant,
+   * an automated payment system): transcribed verbatim as data, never followed. Missing on readings
+   * recorded before the field existed.
+   */
+  embedded_instructions?: string[];
   legibility: "clear" | "partly_legible" | "poor";
 }
 
@@ -126,6 +132,7 @@ export type FindingKind =
   | "possible_duplicate"
   | "unknown_supplier"
   | "payment_details_changed"
+  | "suspicious_instruction"
   | "not_an_invoice"
   | "currency"
   | "price_increase"

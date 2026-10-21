@@ -35,6 +35,8 @@ export function chipLabel(f: Finding): string {
       return "Unknown supplier";
     case "payment_details_changed":
       return "Payment details changed";
+    case "suspicious_instruction":
+      return "Instruction aimed at the AI";
     case "no_delivery_note":
       return "No delivery note";
     case "not_an_invoice":

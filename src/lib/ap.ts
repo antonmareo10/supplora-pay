@@ -7,7 +7,10 @@ export const OVERCHARGE_KINDS: FindingKind[] = ["price_increase", "quantity_mism
 
 // Findings that mean "don't pay this at all" (hold). They never translate into a partial withholding,
 // so an invoice whose only findings are these cannot be paid partially — it is pay-in-full or hold.
-const HOLD_ONLY_KINDS: FindingKind[] = ["duplicate", "unknown_supplier", "payment_details_changed", "not_an_invoice", "currency"];
+export const HOLD_ONLY_KINDS: FindingKind[] = ["duplicate", "unknown_supplier", "payment_details_changed", "suspicious_instruction", "not_an_invoice", "currency"];
+
+/** Holds that point to possible fraud: never answered by email (the channel may be compromised); verify by phone. */
+export const FRAUD_HOLD_KINDS: FindingKind[] = ["unknown_supplier", "payment_details_changed", "suspicious_instruction"];
 
 /** What a partial payment would withhold (line-level overcharges only), capped at the invoice. 0 ⇒ partial makes no sense. */
 export function withholdableCents(doc: DocumentRecord): number {

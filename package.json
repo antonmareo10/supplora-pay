@@ -8,7 +8,7 @@
     "start": "next start -p 3300",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "node --test --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/lib/checks.test.ts src/lib/ap.test.ts src/lib/paypal-toolkit.test.ts src/lib/demo-sweep.test.ts src/lib/write-limits.test.ts src/lib/settlement.test.ts src/lib/webhook-events.test.ts",
+    "test": "node --test --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/lib/checks.test.ts src/lib/ap.test.ts src/lib/paypal-toolkit.test.ts src/lib/demo-sweep.test.ts src/lib/write-limits.test.ts src/lib/settlement.test.ts src/lib/webhook-events.test.ts src/lib/plan-rules.test.ts",
     "samples": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-samples.mjs"
   },
   "dependencies": {

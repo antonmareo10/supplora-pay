@@ -4,7 +4,7 @@
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { DELIVERY_NOTES, RESTAURANT, supplierById } from "@/data/seed";
-import { effective } from "./ap";
+import { effective, FRAUD_HOLD_KINDS } from "./ap";
 import { anthropic, claudeErrorMessage, claudeMode, MODEL, usageLabel } from "./claude";
 import { fmtDay } from "./dates";
 import { fmt } from "./money";
@@ -29,6 +29,9 @@ const EmailSchema = z.object({
 export function needsDispute(doc: DocumentRecord): boolean {
   const e = effective(doc);
   if (!e || !doc.review) return false;
+  // Possible fraud (changed payee, instructions aimed at the AI, unknown sender) is verified by phone,
+  // never answered by email: the email channel may be the compromised one.
+  if (e.action === "hold" && doc.review.findings.some((f) => FRAUD_HOLD_KINDS.includes(f.kind))) return false;
   return e.action === "hold" || e.withheldCents > 0;
 }
 

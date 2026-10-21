@@ -309,6 +309,19 @@ export const DELIVERY_NOTES: DeliveryNote[] = [
       { itemKey: "cp.sanitiser", description: "Food-safe sanitiser 750ml", qty: 12, unit: "unit" },
     ],
   },
+  {
+    id: "dn-cp-4502",
+    supplierId: "cleanpro",
+    number: "DN-4502",
+    date: "2026-10-14",
+    receivedBy: "Javi (kitchen)",
+    lines: [
+      { itemKey: "cp.degreaser", description: "Heavy-duty degreaser 5L", qty: 4, unit: "unit" },
+      { itemKey: "cp.rinse", description: "Rinse aid 10L", qty: 2, unit: "unit" },
+      { itemKey: "cp.blueroll", description: "Blue roll, pack of 6", qty: 4, unit: "pack" },
+      { itemKey: "cp.sanitiser", description: "Food-safe sanitiser 750ml", qty: 12, unit: "unit" },
+    ],
+  },
 ];
 
 export const PAID_INVOICES: PaidInvoice[] = [
@@ -358,7 +371,7 @@ export const INITIAL_INVENTORY: InventoryItem[] = [
 
 export const DEFAULT_SETTINGS = { cashCapCents: 250_000, restockLimitCents: 15_000 };
 
-/** The six supplier documents waiting in the inbox at the start of the demo. */
+/** The seven supplier documents waiting in the inbox at the start of the demo. */
 export const SAMPLE_FILES = [
   "01-huerta-guadalhorce.png",
   "02-pescados-bahia.png",
@@ -366,6 +379,7 @@ export const SAMPLE_FILES = [
   "04-green-valley-dairy.png",
   "05-atlantic-wine.png",
   "06-cleanpro.png",
+  "07-cleanpro-new-payee.png",
 ];
 
 export function supplierById(id: string | null | undefined): Supplier | undefined {
