@@ -6,7 +6,7 @@
 
 It grows out of [Supplora](https://www.supplora.app), an AI tool that reads restaurant delivery notes at the kitchen door and pushes them into the restaurant's ERP, in production at a family-run restaurant in Spain since March 2026 (715 delivery notes read and 103 supplier price increases flagged, worth €1,876, by September 2026). That is where the delivery notes and price history Supplora Pay matches against come from. In this repo they are seeded (`src/data/seed.ts`) and the restaurant, suppliers and people are fictional.
 
-Built for the **PayPal AI Hackathon** (2026) · *Best Use of PayPal + AI* · *Best Use of Agentic Commerce* · AG Grid sponsor prize. MIT licensed. Built during the hackathon, from 16 Oct 2026 (see "Built during the hackathon" below); the full commit history is public.
+Built for the **PayPal AI Hackathon** (2026) · *Best Use of PayPal + AI* · *Best Use of Agentic Commerce* · AG Grid sponsor prize. MIT licensed. Development started on 16 Oct 2026 (first commit `dc36498`); what was built when is under "Built during the hackathon" below, and the full commit history is public.
 
 ![Overview](docs/screenshots/devpost/01-catches.png)
 
@@ -239,7 +239,7 @@ With `DEMO_MODE=1` and no keys at all (no `.env.local`), the invoice review, the
 
 ## Built during the hackathon
 
-Every line of this repo was written during the hackathon; the commit history is the record. Supplora (the delivery-note reader in production) existed before and is not part of this repo.
+From the commit history (first commit `dc36498`, 16 Oct 2026). Supplora, the delivery-note reader in production, is a separate, earlier product; its code is not in this repo.
 
 | Date | What was built |
 |---|---|
