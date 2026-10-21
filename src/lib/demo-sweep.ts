@@ -40,11 +40,16 @@ export interface SweepOptions {
 }
 
 export interface SweepResult {
+  /** Batches in the registry, and those old enough (and matching `only`) for this sweep. */
+  listed: number;
+  due: number;
   checked: number;
   cancelled: number;
   cents: number;
   forgotten: number;
   errors: number;
+  /** Cancels PayPal refused for good (4xx): the item was claimed or cancelled already, or cannot be cancelled. */
+  rejected: number;
 }
 
 /** Old enough that PayPal has returned any unclaimed money itself (30 days), so stop tracking it. */
@@ -67,12 +72,13 @@ function amountCents(value: string | undefined): number {
 }
 
 export async function sweepDemoPayouts(deps: SweepDeps, opts: SweepOptions): Promise<SweepResult> {
-  const r: SweepResult = { checked: 0, cancelled: 0, cents: 0, forgotten: 0, errors: 0 };
+  const r: SweepResult = { listed: 0, due: 0, checked: 0, cancelled: 0, cents: 0, forgotten: 0, errors: 0, rejected: 0 };
   const now = deps.now();
-  const due = (await deps.list())
-    .filter((e) => now - e.at >= opts.minAgeMs && (!opts.only || opts.only(e)))
-    .sort((a, b) => a.at - b.at)
-    .slice(0, opts.maxBatches ?? 10);
+  const registered = await deps.list();
+  const eligible = registered.filter((e) => now - e.at >= opts.minAgeMs && (!opts.only || opts.only(e)));
+  r.listed = registered.length;
+  r.due = eligible.length;
+  const due = eligible.sort((a, b) => a.at - b.at).slice(0, opts.maxBatches ?? 10);
 
   for (const entry of due) {
     if (now - entry.at > REGISTRY_MAX_AGE_MS) {
@@ -104,7 +110,7 @@ export async function sweepDemoPayouts(deps: SweepDeps, opts: SweepOptions): Pro
           if (!isFinalRejection(err)) {
             stillOpen = true;
             r.errors++;
-          }
+          } else r.rejected++;
         }
       } else if (ITEM_MOVING.includes(item.transaction_status)) {
         stillOpen = true;

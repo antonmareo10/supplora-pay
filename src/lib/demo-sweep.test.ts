@@ -58,6 +58,8 @@ test("sweep: cancels UNCLAIMED items of batches older than the threshold and for
   );
   const r = await sweepDemoPayouts(deps, { minAgeMs: 20 * MIN });
   assert.deepEqual(calls.get, ["OLD1"]); // the 5-minute-old batch is left alone
+  assert.equal(r.listed, 2);
+  assert.equal(r.due, 1);
   assert.deepEqual(calls.cancel, ["I1", "I2"]);
   assert.equal(r.cancelled, 2);
   assert.equal(r.cents, 56034 + 113434);
@@ -93,6 +95,7 @@ test("sweep: an already-cancelled item (4xx) is done; a PayPal 5xx keeps the bat
   const r = await sweepDemoPayouts(deps, { minAgeMs: 20 * MIN });
   assert.equal(r.cancelled, 0);
   assert.equal(r.errors, 1);
+  assert.equal(r.rejected, 1); // counted, so the housekeeping log shows it instead of passing in silence
   assert.deepEqual([...registry.keys()], ["B2"]);
 });
 

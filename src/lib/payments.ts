@@ -56,19 +56,40 @@ const HOUSEKEEPING_KEY = "demo:housekeeping";
 type SweepState = { chain: Promise<unknown>; lastStale: number };
 const sweepState = ((globalThis as typeof globalThis & { __supploraSweep?: SweepState }).__supploraSweep ??= { chain: Promise.resolve(), lastStale: 0 });
 
-/** Runs one sweep, serialised with any other sweep in this process. Its PayPal calls are audited in a housekeeping session. */
-function runDemoSweep(opts: SweepOptions): Promise<SweepResult> {
+/**
+ * Runs one sweep, serialised with any other sweep in this process. Its PayPal calls are audited in a
+ * housekeeping session no visitor can open, so each sweep that had work also leaves one line in the
+ * host's logs (counts, batch and item ids, PayPal's error names; never credentials).
+ */
+function runDemoSweep(opts: SweepOptions, trigger: string): Promise<SweepResult> {
   const attempt = Date.now().toString(36);
   const deps: SweepDeps = {
     list: listDemoPayouts,
     forget: forgetDemoPayout,
-    getBatch: (e) => getPayoutBatch(e.batchId, { batchId: e.batchId }),
-    cancelItem: async (itemId, cents) => void (await cancelUnclaimedPayoutItem(itemId, cents, attempt)),
+    getBatch: async (e) => {
+      try {
+        return await getPayoutBatch(e.batchId, { batchId: e.batchId });
+      } catch (err) {
+        console.warn(`[demo housekeeping] batch ${e.batchId}: PayPal read failed: ${err instanceof Error ? err.message : err}`);
+        throw err;
+      }
+    },
+    cancelItem: async (itemId, cents, e) => {
+      try {
+        await cancelUnclaimedPayoutItem(itemId, cents, attempt);
+      } catch (err) {
+        console.warn(`[demo housekeeping] batch ${e.batchId} item ${itemId}: cancel refused: ${err instanceof Error ? err.message : err}`);
+        throw err;
+      }
+    },
     now: Date.now,
   };
   const run = sweepState.chain.then(() => runWithStateKey(HOUSEKEEPING_KEY, () => sweepDemoPayouts(deps, opts)));
   sweepState.chain = run.catch(() => undefined);
-  return run;
+  return run.then((r) => {
+    if (r.listed || r.errors) console.info(`[demo housekeeping] ${trigger} sweep: ${JSON.stringify(r)}`);
+    return r;
+  });
 }
 
 /**
@@ -79,7 +100,7 @@ export async function sweepStaleDemoPayouts(): Promise<void> {
   if (!demoMode() || !paypalConfigured() || Date.now() - sweepState.lastStale < SWEEP_EVERY_MS) return;
   sweepState.lastStale = Date.now();
   try {
-    await runDemoSweep({ minAgeMs: STALE_MS });
+    await runDemoSweep({ minAgeMs: STALE_MS }, "stale");
   } catch (err) {
     console.error("[demo housekeeping] sweep failed:", err instanceof Error ? err.message : err);
   }
@@ -92,7 +113,7 @@ export async function sweepStaleDemoPayouts(): Promise<void> {
 export async function returnSessionDemoPayouts(key: string, before: number): Promise<void> {
   if (!demoMode() || !paypalConfigured()) return;
   try {
-    await runDemoSweep({ minAgeMs: 0, only: (e) => e.key === key && e.at <= before });
+    await runDemoSweep({ minAgeMs: 0, only: (e) => e.key === key && e.at <= before }, "reset");
   } catch (err) {
     console.error("[demo housekeeping] reset sweep failed:", err instanceof Error ? err.message : err);
   }
@@ -173,7 +194,7 @@ export async function approvePayments(planId: string, docIds: string[]): Promise
     } catch (err) {
       // Demo only: the shared sandbox account ran dry; return other sessions' unclaimed payouts, retry once.
       if (!(demo && err instanceof PayPalError && /INSUFFICIENT_FUNDS/.test(`${err.issue} ${err.message}`))) throw err;
-      const back = await runDemoSweep({ minAgeMs: 0, only: (e) => e.key !== key }).catch(() => null);
+      const back = await runDemoSweep({ minAgeMs: 0, only: (e) => e.key !== key }, "insufficient-funds").catch(() => null);
       if (!back?.cancelled) throw err;
       locked.senderBatchId = `${locked.senderBatchId}-r`;
       response = await send(locked.senderBatchId);
