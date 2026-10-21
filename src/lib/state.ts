@@ -5,11 +5,13 @@
 //    long-running server (Render), or in Redis when KV_REST_API_URL/KV_REST_API_TOKEN (or the
 //    UPSTASH_REDIS_REST_* equivalents) are set, so serverless hosts (Vercel) keep a session's
 //    state across instances. Demo sessions expire after a day of inactivity.
+//  - DEMO_MODE also keeps a cross-session registry of sent payout batches (see below).
 // Good enough for a demo; a real deployment would use a database with per-user auth.
 
 import fs from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_SETTINGS, INITIAL_INVENTORY, SAMPLE_FILES } from "@/data/seed";
+import type { DemoPayoutEntry } from "./demo-sweep";
 import { currentStateKey } from "./session";
 import type { AppState, AuditEntry, DocumentRecord } from "./types";
 
@@ -22,7 +24,7 @@ const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_MEMORY_SESSIONS = 400;
 
 type Slot = { lock: Promise<unknown>; state?: AppState; touched: number };
-const g = globalThis as typeof globalThis & { __supploraSlots?: Map<string, Slot> };
+const g = globalThis as typeof globalThis & { __supploraSlots?: Map<string, Slot>; __supploraDemoPayouts?: Map<string, DemoPayoutEntry> };
 const slots: Map<string, Slot> = (g.__supploraSlots ??= new Map());
 
 export function newId(prefix: string): string {
@@ -204,6 +206,44 @@ export async function resetState(): Promise<void> {
     await persistTo(key, slot.state);
     if (key === "default") await fs.rm(UPLOAD_DIR, { recursive: true, force: true });
   });
+}
+
+// ---------------------------------------------------------------------------
+// Public demo: registry of every payout batch the demo has sent, across sessions, so the
+// housekeeping sweep (demo-sweep.ts) can return unclaimed sandbox money even when the visitor
+// never comes back. Same backend as the sessions: process memory, or Redis when configured (so it
+// survives restarts and is shared by serverless instances).
+
+const REGISTRY_KEY = "supplora-pay:demo-payout-batches";
+const REGISTRY_TTL_S = 31 * 24 * 60 * 60;
+const memoryRegistry: Map<string, DemoPayoutEntry> = (g.__supploraDemoPayouts ??= new Map());
+
+export async function registerDemoPayout(entry: DemoPayoutEntry): Promise<void> {
+  if (redisConfig()) {
+    await redis(["HSET", REGISTRY_KEY, entry.batchId, JSON.stringify(entry)]);
+    await redis(["EXPIRE", REGISTRY_KEY, String(REGISTRY_TTL_S)]);
+    return;
+  }
+  memoryRegistry.set(entry.batchId, entry);
+}
+
+export async function listDemoPayouts(): Promise<DemoPayoutEntry[]> {
+  if (!redisConfig()) return [...memoryRegistry.values()];
+  const flat = ((await redis(["HGETALL", REGISTRY_KEY])) as string[] | null) ?? [];
+  const out: DemoPayoutEntry[] = [];
+  for (let i = 1; i < flat.length; i += 2) {
+    try {
+      out.push(JSON.parse(flat[i]) as DemoPayoutEntry);
+    } catch {
+      /* skip a malformed entry */
+    }
+  }
+  return out;
+}
+
+export async function forgetDemoPayout(batchId: string): Promise<void> {
+  if (redisConfig()) await redis(["HDEL", REGISTRY_KEY, batchId]);
+  else memoryRegistry.delete(batchId);
 }
 
 export function auditEntry(entry: Omit<AuditEntry, "id" | "at">): AuditEntry {

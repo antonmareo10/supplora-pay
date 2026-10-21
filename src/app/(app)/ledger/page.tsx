@@ -21,35 +21,52 @@ export default async function LedgerPage() {
   const s = ledgerStats(state, today);
   const payableRows = buildPayableRows(state);
   const apiCalls = state.audit.filter((a) => a.actor === "paypal").length;
+  const sentHint =
+    s.sentCount === 0
+      ? "nothing sent yet"
+      : s.awaitingClaimCount > 0
+        ? `${s.sentCount} payout${s.sentCount === 1 ? "" : "s"}; ${s.awaitingClaimCount} awaiting the supplier's claim (${fmt(s.awaitingClaimCents)})`
+        : `${s.sentCount} payout${s.sentCount === 1 ? "" : "s"}, claimed by the supplier`;
 
   return (
     <div className="space-y-10">
       <PageHeader kicker="Ledger" title="Every euro, every decision">
-        What was paid, held and disputed, the money Supplora saved, and an audit trail of every agent decision and every PayPal API call (method,
-        endpoint, status, resource id; never credentials).
+        What was sent through PayPal, withheld and held, the discounts captured, and an audit trail of every agent decision and every PayPal API
+        call (method, endpoint, status, resource id; never credentials).
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Kpi label="Paid via PayPal" value={fmt(s.paidCents)} hint={`${s.paidCount} supplier payment${s.paidCount === 1 ? "" : "s"}`} />
-        <Kpi label="Withheld (disputes)" value={fmt(s.withheldCents)} hint={`${s.disputedCount} invoice${s.disputedCount === 1 ? "" : "s"} paid partially`} tone="terracotta" />
+        <Kpi label="Sent via PayPal" value={fmt(s.sentCents)} hint={sentHint} />
+        <Kpi
+          label="Withheld (credit notes)"
+          value={fmt(s.withheldCents)}
+          hint={`${s.disputedCount} invoice${s.disputedCount === 1 ? "" : "s"}, until the supplier sends a credit note`}
+          tone="terracotta"
+        />
         <Kpi label="Held" value={fmt(s.heldCents)} hint={`${s.heldCount} invoice${s.heldCount === 1 ? "" : "s"} not paid`} tone="terracotta" />
-        <Kpi label="Money saved" value={fmt(s.protectedCents)} hint="overcharges + duplicates + discounts" tone="olive" />
+        <Kpi
+          label="Discounts captured"
+          value={fmt(s.discountsCapturedCents)}
+          hint={s.discountsAvailableCents > 0 ? `${fmt(s.discountsAvailableCents)} still available` : "early-payment discounts taken"}
+          tone="olive"
+        />
       </div>
 
       <Card className="p-5 sm:p-6">
-        <SectionTitle kicker="Savings" title="Where the savings come from" />
+        <SectionTitle kicker="Kept back or saved" title="What the checks held back, and what was saved" />
         <dl className="grid gap-4 sm:grid-cols-4">
           <div>
-            <dt className="text-sm text-muted">Overcharges caught</dt>
+            <dt className="text-sm text-muted">Overcharges withheld</dt>
             <dd className="num text-xl font-semibold text-terracotta">{fmt(s.overchargesCaughtCents)}</dd>
-            <dd className="text-xs text-muted">price rises, short deliveries, wrong totals</dd>
+            <dd className="text-xs text-muted">price rises, short deliveries, wrong totals; recovered once the supplier sends the credit note</dd>
           </div>
           <div>
-            <dt className="text-sm text-muted">Double payments blocked</dt>
+            <dt className="text-sm text-muted">Double payments held</dt>
             <dd className="num text-xl font-semibold text-terracotta">{fmt(s.duplicatesBlockedCents)}</dd>
+            <dd className="text-xs text-muted">invoices already paid, not paid again</dd>
           </div>
           <div>
-            <dt className="text-sm text-muted">Early-payment discounts</dt>
+            <dt className="text-sm text-muted">Early-payment discounts captured</dt>
             <dd className="num text-xl font-semibold text-olive">{fmt(s.discountsCapturedCents)}</dd>
             {s.discountsAvailableCents > 0 && <dd className="text-xs text-muted">{fmt(s.discountsAvailableCents)} still available</dd>}
           </div>

@@ -1,7 +1,7 @@
 // Streams an agent run to the browser as NDJSON events.
 
 import { acquireRun, encodeLine } from "./http";
-import { currentStateKey, runWithStateKey } from "./session";
+import { currentClientIp, currentStateKey, runWithStateKey } from "./session";
 import type { AgentEvent } from "./types";
 
 export async function agentStream(
@@ -12,6 +12,7 @@ export async function agentStream(
   // The run keeps working after this handler returns its streaming Response: pin the visitor's
   // state key so every read and write inside it hits the same session.
   const key = await currentStateKey();
+  const ip = await currentClientIp();
   const release = acquireRun(`${key}:${kind}`);
   const started = Date.now();
   const stream = new ReadableStream<Uint8Array>({
@@ -26,7 +27,7 @@ export async function agentStream(
         }
       };
       try {
-        await runWithStateKey(key, () => run(emit, signal));
+        await runWithStateKey(key, () => run(emit, signal), ip);
       } catch (err) {
         emit({ type: "error", message: err instanceof Error ? err.message : "Unexpected error" });
       } finally {

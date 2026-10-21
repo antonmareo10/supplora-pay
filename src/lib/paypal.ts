@@ -5,9 +5,10 @@
 //    request bodies, tokens and credentials never do.
 
 import { toDecimalString } from "./money";
-import { currentStateKey, demoMode } from "./session";
+import { currentClientIp, currentStateKey, demoMode } from "./session";
 import { audit, readState, updateState } from "./state";
 import type { AuditEntry, CartLine } from "./types";
+import { WriteLimiter } from "./write-limits";
 
 const SANDBOX = "https://api-m.sandbox.paypal.com";
 
@@ -85,21 +86,18 @@ export function sandboxAccessToken(): Promise<string> {
   return accessToken();
 }
 
-// Public demo (DEMO_MODE): cap PayPal writes so an open URL cannot be used to hammer the sandbox
-// app. One full click-through of the demo makes about ten writes.
-const DEMO_WRITES_PER_SESSION_HOUR = 40;
-const DEMO_WRITES_PER_HOUR = 400;
-const writeLog = ((globalThis as typeof globalThis & { __supploraWrites?: { at: number; key: string }[] }).__supploraWrites ??= []);
+// Public demo (DEMO_MODE): cap PayPal writes per visitor session, per client IP and in total, so an
+// open URL cannot be used to hammer the sandbox app (see write-limits.ts).
+const writeLimiter = ((globalThis as typeof globalThis & { __supploraWriteLimiter?: WriteLimiter }).__supploraWriteLimiter ??= new WriteLimiter());
 
 async function demoWriteGuard(): Promise<void> {
   if (!demoMode()) return;
-  const key = await currentStateKey();
-  const hourAgo = Date.now() - 3_600_000;
-  while (writeLog.length && writeLog[0].at < hourAgo) writeLog.shift();
-  if (writeLog.length >= DEMO_WRITES_PER_HOUR || writeLog.filter((w) => w.key === key).length >= DEMO_WRITES_PER_SESSION_HOUR) {
-    throw new PayPalError("The public demo's PayPal sandbox limit for this hour is reached. Try again later, or run the app with your own sandbox app.", 429);
+  const [key, ip] = await Promise.all([currentStateKey(), currentClientIp()]);
+  const decision = writeLimiter.take(key, ip);
+  if (!decision.ok) {
+    const who = decision.scope === "session" ? "for this session" : decision.scope === "ip" ? "for your network" : "for everyone";
+    throw new PayPalError(`The public demo's PayPal sandbox limit ${who} is reached for this hour. Try again later, or run the app with your own sandbox app.`, 429);
   }
-  writeLog.push({ at: Date.now(), key });
 }
 
 interface PayPalErrorBody {
@@ -247,13 +245,15 @@ export async function createPayoutBatch(input: {
 
 /**
  * Cancel an UNCLAIMED payout item: PayPal returns the funds to the sender at once (instead of
- * after 30 days). Used only by the public demo's housekeeping, never by an agent.
+ * after 30 days). Used only by the public demo's housekeeping, never by an agent. `attempt` (one
+ * per sweep) makes the call idempotent within a sweep while a later sweep can try again.
  */
-export async function cancelUnclaimedPayoutItem(itemId: string, amountCents: number): Promise<{ transaction_status?: string }> {
+export async function cancelUnclaimedPayoutItem(itemId: string, amountCents: number, attempt: string): Promise<{ transaction_status?: string }> {
   if (!/^[A-Z0-9]{6,40}$/.test(itemId)) throw new PayPalError("Invalid payout item id", 400);
   return request<{ transaction_status?: string }>({
     method: "POST",
     path: `/v1/payments/payouts-item/${itemId}/cancel`,
+    requestId: `cancel-${itemId}-${attempt}`,
     label: "Demo housekeeping: unclaimed sandbox payout returned to the demo account",
     amountCents,
     housekeeping: true,

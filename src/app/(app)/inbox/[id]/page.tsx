@@ -4,10 +4,10 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { DecisionControl, DocumentViewer, ReviewButton } from "@/components/client/ReviewControls";
 import { IconArrowLeft, IconCheck, IconTruck } from "@/components/icons";
-import { ACTION_TONE, buttonClass, Card, cx, docStatus, ErrorNote, Money, Mono, Pill, SEVERITY_LABEL, SEVERITY_TONE, SeverityIcon, Stamp } from "@/components/ui";
+import { ACTION_TONE, buttonClass, Card, cx, docStatus, ErrorNote, Money, Mono, paymentLabel, Pill, SEVERITY_LABEL, SEVERITY_TONE, SeverityIcon, Stamp } from "@/components/ui";
 import { CATALOG, DELIVERY_NOTES, supplierById } from "@/data/seed";
-import { ACTION_LABEL, effective, isSettled } from "@/lib/ap";
-import { claudeAvailable } from "@/lib/claude";
+import { ACTION_LABEL, effective, isPaidOrSent } from "@/lib/ap";
+import { claudeAvailable, claudeMode } from "@/lib/claude";
 import { businessToday, fmtDay, fmtDateTime, relativeDue } from "@/lib/dates";
 import { fmt, fmtQty, toCents } from "@/lib/money";
 import { readState } from "@/lib/state";
@@ -76,7 +76,7 @@ export default async function ReviewPage(props: PageProps<"/inbox/[id]">) {
   const title = r ? `${supplier?.name ?? r.extraction.supplier_name} · ${r.extraction.invoice_number ?? ""}` : doc.fileName;
   const lineFlags = new Map<number, Finding[]>();
   r?.findings.forEach((f) => f.lineIndex != null && lineFlags.set(f.lineIndex, [...(lineFlags.get(f.lineIndex) ?? []), f]));
-  const settled = isSettled(doc);
+  const settled = isPaidOrSent(doc);
   const partialAvailable = !!r && r.findings.some((f) => f.withholdCents > 0 && !["duplicate", "unknown_supplier", "payment_details_changed", "not_an_invoice", "currency"].includes(f.kind));
 
   return (
@@ -187,7 +187,7 @@ export default async function ReviewPage(props: PageProps<"/inbox/[id]">) {
                   <DecisionControl docId={doc.id} recommended={r.recommendation} current={e.action} locked={settled} partialAvailable={partialAvailable} />
                   {doc.payment.status !== "unpaid" && (
                     <p className="mt-3 text-sm text-ink-2">
-                      Payment: <strong>{doc.payment.status}</strong>
+                      Payment: <strong>{paymentLabel(doc.payment.status)}</strong>
                       {doc.payment.amountCents != null && <> · {fmt(doc.payment.amountCents)}</>}
                       {doc.payment.batchId && (
                         <>
@@ -235,7 +235,59 @@ export default async function ReviewPage(props: PageProps<"/inbox/[id]">) {
                   <h2 className="font-display text-2xl">Lines</h2>
                   <span className="text-xs text-muted">Transcribed by Claude · checked against {dn ? `delivery note ${dn.number}` : "price history"}</span>
                 </div>
-                <div className="table-wrap mt-3">
+                {/* Phones: one card per line, so Total and Check stay visible without scrolling sideways. */}
+                <ul className="mt-3 divide-y divide-line border-t border-line sm:hidden">
+                  {r.extraction.lines.map((line, i) => {
+                    const c = r.lineChecks[i];
+                    const st = LINE_STATUS[c?.status ?? "ok"];
+                    const mapped = CATALOG.find((x) => x.key === line.matched_item_key);
+                    const short = c?.deliveredQty != null && c.deliveredQty < line.quantity;
+                    return (
+                      <li key={i} className={cx("px-5 py-3", lineFlags.has(i) && "bg-terracotta-soft/40")}>
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="min-w-0 font-medium leading-snug text-ink">
+                            {line.description}
+                            {mapped && mapped.name.toLowerCase() !== line.description.toLowerCase() && (
+                              <span className="block text-xs font-normal text-muted">= {mapped.name}</span>
+                            )}
+                          </p>
+                          <span className={cx("shrink-0 pt-0.5 text-xs font-semibold", st.cls)}>{st.label}</span>
+                        </div>
+                        <dl className="mt-1.5 grid grid-cols-4 gap-x-2 text-[13px]">
+                          <div>
+                            <dt className="text-[10.5px] uppercase tracking-wider text-muted">Invoiced</dt>
+                            <dd className="num">
+                              {fmtQty(line.quantity)} {line.unit}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-[10.5px] uppercase tracking-wider text-muted">Received</dt>
+                            <dd className={cx("num", short ? "font-semibold text-terracotta" : "text-ink-2")}>{c?.deliveredQty != null ? fmtQty(c.deliveredQty) : "—"}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-[10.5px] uppercase tracking-wider text-muted">Price</dt>
+                            <dd className={cx("num", c?.status === "price_up" && "font-semibold text-terracotta")}>{fmt(toCents(line.unit_price))}</dd>
+                            {c?.lastPriceCents != null && c.lastPriceCents !== toCents(line.unit_price) && (
+                              <dd className="num text-[11px] text-muted">usual {fmt(c.lastPriceCents)}</dd>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <dt className="text-[10.5px] uppercase tracking-wider text-muted">Total</dt>
+                            <dd className={cx("num", c?.status === "math" && "font-semibold text-saffron")}>{fmt(toCents(line.line_total))}</dd>
+                          </div>
+                        </dl>
+                      </li>
+                    );
+                  })}
+                  <li className="bg-paper/60 px-5 py-2.5 text-sm">
+                    <span className="text-muted">
+                      Subtotal {r.extraction.subtotal != null && <Money cents={toCents(r.extraction.subtotal)} />} · VAT{" "}
+                      {r.extraction.vat_total != null && <Money cents={toCents(r.extraction.vat_total)} />} · Total{" "}
+                    </span>
+                    <span className="num font-semibold">{fmt(r.invoiceCents)}</span>
+                  </li>
+                </ul>
+                <div className="table-wrap mt-3 hidden sm:block">
                   <table className="w-full min-w-[560px] text-sm">
                     <thead>
                       <tr className="border-y border-line bg-paper/60 text-left text-[11px] uppercase tracking-wider text-muted">
@@ -333,8 +385,18 @@ export default async function ReviewPage(props: PageProps<"/inbox/[id]">) {
 
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-paper/60 px-4 py-3 text-xs text-muted">
                 <span>
-                  Read by Claude (<Mono>{r.model}</Mono>) in {(r.durationMs / 1000).toFixed(1)} s{r.cached ? " · cached reading reused" : ""} · reviewed{" "}
-                  {fmtDateTime(r.reviewedAt)} · legibility {r.extraction.legibility.replace("_", " ")}
+                  {r.replayed || (r.cached && claudeMode() === "replay") ? (
+                    <>
+                      Recorded reading by Claude (<Mono>{r.model}</Mono>
+                      {r.recordedAt ? `, recorded ${fmtDay(r.recordedAt.slice(0, 10))}` : ""}, took {(r.durationMs / 1000).toFixed(1)} s), replayed in
+                      this demo; the checks ran live
+                    </>
+                  ) : (
+                    <>
+                      Read by Claude (<Mono>{r.model}</Mono>) in {(r.durationMs / 1000).toFixed(1)} s{r.cached ? " · cached reading reused" : ""}
+                    </>
+                  )}{" "}
+                  · reviewed {fmtDateTime(r.reviewedAt)} · legibility {r.extraction.legibility.replace("_", " ")}
                 </span>
                 {!settled && <ReviewButton docId={doc.id} label="Review again" variant="ghost" />}
               </div>

@@ -43,7 +43,13 @@ export function effective(doc: DocumentRecord): Effective | null {
   return { action, byOwner, invoiceCents: r.invoiceCents, withheldCents: withheld, payableCents: r.invoiceCents - withheld };
 }
 
-export function isSettled(doc: DocumentRecord): boolean {
+/**
+ * A payment for this invoice has been sent to PayPal or is on its way (scheduled, processing,
+ * unclaimed or paid), so it must not be paid again, re-reviewed or re-decided. This is not the same
+ * as "settled": an UNCLAIMED payout has left the restaurant's balance, but PayPal holds it until the
+ * supplier claims it (and returns it after 30 days if they never do).
+ */
+export function isPaidOrSent(doc: DocumentRecord): boolean {
   return ["paid", "unclaimed", "processing", "scheduled"].includes(doc.payment.status);
 }
 
@@ -55,18 +61,24 @@ export interface LedgerStats {
   documents: number;
   reviewed: number;
   openPayableCents: number;
-  paidCents: number;
-  paidCount: number;
+  /** Sent through PayPal Payouts: claimed by the supplier (SUCCESS) or waiting for them to claim it (UNCLAIMED). */
+  sentCents: number;
+  sentCount: number;
+  /** The part of `sent` still UNCLAIMED: PayPal holds it until the supplier claims it. */
+  awaitingClaimCents: number;
+  awaitingClaimCount: number;
   heldCents: number;
   heldCount: number;
   withheldCents: number;
   disputedCount: number;
+  /** Line overcharges withheld until the supplier sends a credit note (not yet money saved). */
   overchargesCaughtCents: number;
   duplicatesBlockedCents: number;
   discountsCapturedCents: number;
   discountsAvailableCents: number;
   ordersCents: number;
   ordersCount: number;
+  /** Kept back or saved: overcharges withheld + duplicates held + discounts captured. */
   protectedCents: number;
 }
 
@@ -75,8 +87,10 @@ export function ledgerStats(state: AppState, today: string): LedgerStats {
     documents: state.documents.length,
     reviewed: 0,
     openPayableCents: 0,
-    paidCents: 0,
-    paidCount: 0,
+    sentCents: 0,
+    sentCount: 0,
+    awaitingClaimCents: 0,
+    awaitingClaimCount: 0,
     heldCents: 0,
     heldCount: 0,
     withheldCents: 0,
@@ -93,12 +107,16 @@ export function ledgerStats(state: AppState, today: string): LedgerStats {
     const e = effective(doc);
     if (!e || !doc.review) continue;
     s.reviewed++;
-    const paid = doc.payment.status === "paid" || doc.payment.status === "unclaimed";
-    if (paid) {
-      s.paidCents += doc.payment.amountCents ?? 0;
-      s.paidCount++;
+    const sent = doc.payment.status === "paid" || doc.payment.status === "unclaimed";
+    if (sent) {
+      s.sentCents += doc.payment.amountCents ?? 0;
+      s.sentCount++;
+      if (doc.payment.status === "unclaimed") {
+        s.awaitingClaimCents += doc.payment.amountCents ?? 0;
+        s.awaitingClaimCount++;
+      }
       s.discountsCapturedCents += doc.payment.discountCents ?? 0;
-    } else if (e.action !== "hold" && !isSettled(doc)) {
+    } else if (e.action !== "hold" && !isPaidOrSent(doc)) {
       s.openPayableCents += e.payableCents;
       const d = doc.review.discount;
       if (d?.available && d.deadline >= today) s.discountsAvailableCents += d.amountCents;

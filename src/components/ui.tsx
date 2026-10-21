@@ -2,7 +2,7 @@
 import type { ReactNode } from "react";
 import { fmt } from "@/lib/money";
 import type { DocumentRecord, PayAction, Severity } from "@/lib/types";
-import { IconAlert, IconCheck, IconInfo, IconPause, IconSpark } from "./icons";
+import { IconAlert, IconCheck, IconClock, IconInfo, IconPause, IconSpark } from "./icons";
 
 export type Tone = "olive" | "saffron" | "terracotta" | "ledger" | "muted" | "ink";
 
@@ -159,7 +159,8 @@ export function docStatus(doc: DocumentRecord): { label: string; tone: Tone; ico
     case "paid":
       return { label: "Paid", tone: "ink", icon: <IconCheck size={12} /> };
     case "unclaimed":
-      return { label: "Sent · unclaimed", tone: "ink", icon: <IconCheck size={12} /> };
+      // PayPal processed the payout but holds it until the supplier claims it: not settled yet.
+      return { label: "Sent · awaiting claim", tone: "saffron", icon: <IconClock size={12} /> };
     case "processing":
     case "scheduled":
       return { label: "Paying…", tone: "ledger" };
@@ -173,6 +174,12 @@ export function docStatus(doc: DocumentRecord): { label: string; tone: Tone; ico
   if (action === "hold") return { label: "Hold", tone: "terracotta", icon: <IconPause size={12} /> };
   if (action === "pay_partial") return { label: "Pay partial", tone: "saffron" };
   return { label: "Pay in full", tone: "olive", icon: <IconCheck size={12} /> };
+}
+
+/** Plain-words payment status for detail lines (UNCLAIMED is not "paid": PayPal holds it until claimed). */
+export function paymentLabel(status: DocumentRecord["payment"]["status"]): string {
+  if (status === "unclaimed") return "sent, awaiting the supplier's claim (PayPal UNCLAIMED)";
+  return status;
 }
 
 export function amountLabel(cents: number): string {

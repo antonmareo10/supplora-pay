@@ -9,7 +9,7 @@ import { OrderCard } from "@/components/OrderCard";
 import { Card, cx, PageHeader, Pill, SectionTitle } from "@/components/ui";
 import { storeSuppliers, supplierById } from "@/data/seed";
 import { lowStock } from "@/lib/ap";
-import { claudeAvailable } from "@/lib/claude";
+import { claudeAvailable, claudeMode } from "@/lib/claude";
 import { fmtDateTime } from "@/lib/dates";
 import { fmt } from "@/lib/money";
 import { paypalConfigured } from "@/lib/paypal";
@@ -66,10 +66,13 @@ export default async function ReorderPage() {
               endpoint="/api/restock"
               buttonLabel="Let the agent restock"
               runningLabel="Shopping…"
+              replay={claudeMode() === "replay"}
               disabled={!ready || low.length === 0 || active?.status === "awaiting_approval"}
               disabledReason={
                 !ready
-                  ? "Needs both ANTHROPIC_API_KEY and the PayPal sandbox credentials in .env.local."
+                  ? !paypalConfigured()
+                    ? "Needs the PayPal sandbox credentials (PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET) in .env.local: the agent creates real sandbox checkouts."
+                    : "Needs ANTHROPIC_API_KEY in .env.local, or DEMO_MODE=1 to replay the recorded run."
                   : low.length === 0
                     ? "Everything is at par. Nothing to buy."
                     : active?.status === "awaiting_approval"

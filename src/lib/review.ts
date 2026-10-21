@@ -18,7 +18,7 @@ import { fmt } from "./money";
 import { recordedReview, recordMode, saveRecordedReview, sha256 } from "./recordings";
 import { CACHE_DIR, UPLOAD_DIR, auditEntry, readState, updateState } from "./state";
 import type { AppState, DocumentRecord, Extraction, PaidInvoice, ReviewRecord } from "./types";
-import { isSettled } from "./ap";
+import { isPaidOrSent } from "./ap";
 
 const PROMPT_VERSION = "review-v1";
 
@@ -190,7 +190,7 @@ async function extractLive(doc: DocumentRecord, bytes: Buffer): Promise<ExtractR
 /** Paid invoices known to Supplora: history before the app plus everything paid through it. */
 function paidInvoices(state: AppState, excludeDocId: string): PaidInvoice[] {
   const viaApp: PaidInvoice[] = state.documents
-    .filter((d) => d.id !== excludeDocId && d.review?.supplierId && d.review.extraction.invoice_number && isSettled(d))
+    .filter((d) => d.id !== excludeDocId && d.review?.supplierId && d.review.extraction.invoice_number && isPaidOrSent(d))
     .map((d) => ({
       supplierId: d.review!.supplierId!,
       invoiceNumber: d.review!.extraction.invoice_number!,
@@ -225,7 +225,7 @@ function check(state: AppState, doc: DocumentRecord, extraction: Extraction) {
 /** Re-run the rules (no Claude) for every reviewed, unpaid document so cross-document checks stay consistent. */
 export function recheckAll(state: AppState): void {
   for (const doc of state.documents) {
-    if (!doc.review || isSettled(doc)) continue;
+    if (!doc.review || isPaidOrSent(doc)) continue;
     const before = doc.review.recommendation;
     const outcome = check(state, doc, doc.review.extraction);
     doc.review = { ...doc.review, ...outcome };
@@ -238,7 +238,7 @@ export async function reviewDocument(docId: string): Promise<DocumentRecord> {
     const doc = s.documents.find((d) => d.id === docId);
     if (!doc) throw new ReviewError("Document not found", 404);
     if (doc.reviewStatus === "reviewing") throw new ReviewError("This document is already being reviewed", 409);
-    if (isSettled(doc)) throw new ReviewError("This invoice has already been paid", 409);
+    if (isPaidOrSent(doc)) throw new ReviewError("This invoice has already been sent to PayPal", 409);
     doc.reviewStatus = "reviewing";
     doc.reviewError = undefined;
     return doc;
@@ -278,6 +278,7 @@ export async function reviewDocument(docId: string): Promise<DocumentRecord> {
       model: ex.result.model,
       durationMs: ex.result.durationMs,
       cached: ex.cached,
+      ...(ex.replayed ? { replayed: true, recordedAt: ex.result.createdAt } : {}),
       extraction,
     };
     doc.review = record;

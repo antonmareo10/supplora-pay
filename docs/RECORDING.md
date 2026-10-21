@@ -27,13 +27,13 @@ Before you hit record:
 
 | # | Where | Click | What to show / say |
 |---|---|---|---|
-| 1 | `/inbox` | **Review 6 with Claude** | Six supplier invoices (photos, Spanish and English) are read one after another; each card gets a recommendation. |
+| 1 | `/inbox` | **Review 6 with Claude** | Six supplier invoice images (Spanish and English; clean renders, not phone photos) are read one after another; each card gets a recommendation. |
 | 2 | `/inbox/doc-02` (Pescados Bahía) | open the card | **Findings with the numbers**: hake at €13.80/kg vs €11.90 on the last three invoices, 14 kg, so withhold €29.26 incl. VAT. The signed delivery note AL-5521 is matched. |
 | 3 | `/inbox/doc-04` (Green Valley Dairy) | open the card | "Payment reminder · copy" of an invoice already paid on 9 Oct → **Hold** (duplicate). |
 | 4 | `/payments` | keep the cash cap at **2500**, click **Plan this week's payments** | The agent log streams the tool calls: `get_open_invoices`, `get_cash_position`, `get_supplier`, `propose_payment_plan` (validated in code), `request_approval`. |
 | 5 | `/payments` | scroll to the plan | **€2,222.68 of the €2,500 cap**; Atlantic Wine paid early saves €23.15; Cárnicas Sanz deferred; Green Valley never paid. "Nothing is paid until you approve." |
 | 6 | `/payments` | **Approve & pay 4 · €2,222.68** | The owner approves. One **PayPal Payouts** batch goes out. |
-| 7 | `/payments` → *Payout batches* | wait about 30–60 s | The batch moves `PENDING → PROCESSING → SUCCESS`; the **batch id** and the four **payout item ids** are visible. Items show `UNCLAIMED` because the demo payees are placeholder addresses (explained on screen). |
+| 7 | `/payments` → *Payout batches* | wait about 30–60 s | The batch moves `PENDING → PROCESSING → SUCCESS`: PayPal accepted and processed it. The **batch id** and the four **payout item ids** are visible. Each item waits `UNCLAIMED` because the demo payees are placeholder addresses, as a real supplier's payout would until they claim it; the plan shows them as *Sent · waiting for supplier to claim* (explained on screen). Say "processed", not "paid". |
 | 8 | `/disputes` | **Draft the email with Claude** on Pescados Bahía | A credit-note request in Spanish, with the exact figures and the payout batch id. *Copy* / *Open in mail app* / *Mark as sent*. |
 | 9 | `/reorder` | keep the limit at **150**, click **Let the agent restock** | The agent checks stock, browses both stores, creates a **PayPal Orders v2** checkout (€144.96, `CREATED`) and verifies it with **`get_order` from the PayPal Agent Toolkit**. |
 | 10 | `/reorder` | point at the proposal | "The agent cannot pay": the toolkit's `pay_order` is never enabled, and capture only exists in the owner's approval route. |

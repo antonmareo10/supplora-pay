@@ -28,7 +28,7 @@ function batchTone(s: string): Tone {
   return "terracotta";
 }
 
-export function BatchStatus({ initial, names }: { initial: PayoutBatchRecord; names: Record<string, string> }) {
+export function BatchStatus({ initial, names, demo }: { initial: PayoutBatchRecord; names: Record<string, string>; demo?: boolean }) {
   const router = useRouter();
   const [batch, setBatch] = useState(initial);
   const [error, setError] = useState<string | null>(null);
@@ -74,11 +74,28 @@ export function BatchStatus({ initial, names }: { initial: PayoutBatchRecord; na
             {batch.feesCents != null && <span className="block text-xs text-muted">fees {fmt(batch.feesCents)}</span>}
           </span>
           <Stamp tone={batchTone(batch.status)} className={!final ? "pulse-dot" : undefined}>
-            {batch.status}
+            Batch {batch.status}
           </Stamp>
         </div>
       </header>
-      <div className="table-wrap">
+      {/* Phones: one row per payout item, status visible without scrolling sideways. */}
+      <ul className="divide-y divide-line sm:hidden">
+        {batch.items.map((i) => (
+          <li key={i.senderItemId} className="px-4 py-3 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <p className="min-w-0 font-medium text-ink">{names[i.docId] ?? i.docId}</p>
+              <span className="num shrink-0 font-medium">{fmt(i.amountCents)}</span>
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <Pill tone={itemTone(i.transactionStatus)}>{i.transactionStatus}</Pill>
+              {i.payoutItemId ? <Mono className="text-[11px]">item {i.payoutItemId}</Mono> : <span className="text-xs text-muted">assigning…</span>}
+              {i.errorName && i.errorName !== "RECEIVER_UNREGISTERED" && <span className="text-[11px] text-terracotta">{i.errorName}</span>}
+            </div>
+            <Mono className="mt-0.5 block break-all text-[11px] text-muted">{i.receiver}</Mono>
+          </li>
+        ))}
+      </ul>
+      <div className="table-wrap hidden sm:block">
         <table className="w-full min-w-[620px] text-sm">
           <thead>
             <tr className="border-b border-line text-left text-[11px] uppercase tracking-wider text-muted">
@@ -128,9 +145,11 @@ export function BatchStatus({ initial, names }: { initial: PayoutBatchRecord; na
         </p>
         {unclaimed && (
           <p>
-            <strong className="text-ink-2">UNCLAIMED</strong> means PayPal accepted and sent the money, but the receiver address has no sandbox PayPal
-            account yet; PayPal holds the funds until it is claimed (returned after 30 days). Point the receivers at your own sandbox accounts to see
-            SUCCESS.
+            PayPal accepted and processed the batch{batch.status === "SUCCESS" ? " (batch SUCCESS)" : ""}. With the demo&apos;s placeholder payees each
+            item waits <strong className="text-ink-2">UNCLAIMED</strong>, as a real supplier&apos;s payout would until they claim it with a PayPal
+            account: PayPal holds the money meanwhile and returns it after 30 days if nobody claims it. Point the receivers at a sandbox account of
+            your own (<code className="font-mono">PAYPAL_PAYOUT_RECEIVER_OVERRIDE</code>) to see items reach SUCCESS.
+            {demo && " In this public demo, unclaimed payouts are cancelled after about 20 minutes so the sandbox money goes back for the next visitor."}
           </p>
         )}
         {error && <p className="text-terracotta">{error}</p>}

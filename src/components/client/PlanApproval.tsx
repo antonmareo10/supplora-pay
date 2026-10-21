@@ -5,7 +5,7 @@ import { useState } from "react";
 import { fmtDay } from "@/lib/dates";
 import { fmt } from "@/lib/money";
 import type { PaymentPlan, PlannedPayment } from "@/lib/types";
-import { IconCheck, IconShield } from "../icons";
+import { IconCheck, IconClock, IconShield } from "../icons";
 import { buttonClass, cx, ErrorNote, Pill, type Tone } from "../ui";
 import { errorText, postJson } from "./api";
 
@@ -14,7 +14,8 @@ const STATUS: Record<PlannedPayment["status"], { label: string; tone: Tone }> = 
   sending: { label: "Sending to PayPal…", tone: "ledger" },
   processing: { label: "PayPal processing", tone: "ledger" },
   paid: { label: "Paid", tone: "olive" },
-  unclaimed: { label: "Sent · unclaimed", tone: "olive" },
+  // PayPal accepted and processed the payout; it waits UNCLAIMED until the supplier claims it.
+  unclaimed: { label: "Sent · waiting for supplier to claim", tone: "saffron" },
   failed: { label: "Failed", tone: "terracotta" },
   cancelled: { label: "Cancelled", tone: "muted" },
 };
@@ -93,8 +94,14 @@ export function PlanApproval({ plan }: { plan: PaymentPlan }) {
                     className="h-4 w-4 accent-[var(--ledger)]"
                   />
                 ) : (
-                  <span className={cx("grid h-4 w-4 place-items-center rounded-full", p.status === "paid" || p.status === "unclaimed" ? "bg-olive text-white" : "bg-ledger-soft")}>
-                    {(p.status === "paid" || p.status === "unclaimed") && <IconCheck size={11} />}
+                  <span
+                    className={cx(
+                      "grid h-4 w-4 place-items-center rounded-full",
+                      p.status === "paid" ? "bg-olive text-white" : p.status === "unclaimed" ? "bg-saffron-soft text-saffron ring-1 ring-saffron/40" : "bg-ledger-soft",
+                    )}
+                  >
+                    {p.status === "paid" && <IconCheck size={11} />}
+                    {p.status === "unclaimed" && <IconClock size={11} />}
                   </span>
                 )}
               </div>

@@ -27,14 +27,14 @@ export function NavLinks({ counts, variant }: { counts: NavCounts; variant: "sid
   const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
   if (variant === "top") {
     return (
-      <nav aria-label="Main" className="-mx-4 flex gap-1 overflow-x-auto px-4 pb-1">
+      <nav aria-label="Main" className="grid grid-cols-3 gap-1 pb-2 sm:flex sm:flex-wrap">
         {ITEMS.map((item) => (
           <Link
             key={item.href}
             href={item.href}
             aria-current={isActive(item.href) ? "page" : undefined}
             className={cx(
-              "inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition",
+              "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1.5 text-[13px] transition sm:px-3 sm:text-sm",
               isActive(item.href) ? "bg-ink text-paper" : "text-ink-2 hover:bg-paper-2",
             )}
           >

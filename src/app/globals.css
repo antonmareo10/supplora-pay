@@ -203,10 +203,16 @@ body {
   outline-offset: 2px;
 }
 
-/* Scrollable tables on small screens without breaking the page width. */
+/* Scrollable tables on small screens without breaking the page width. The backgrounds draw a
+   shadow on the side that still has columns to scroll to (and nothing when the table fits). */
 .table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  background:
+    linear-gradient(to right, var(--card) 30%, transparent) left center / 40px 100% no-repeat local,
+    linear-gradient(to left, var(--card) 30%, transparent) right center / 40px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgb(60 45 20 / 0.18), transparent) left center / 14px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgb(60 45 20 / 0.18), transparent) right center / 14px 100% no-repeat scroll;
 }
 
 @media print {

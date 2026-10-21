@@ -6,7 +6,7 @@
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { PAID_INVOICES, RESTAURANT, supplierById } from "@/data/seed";
-import { effective, isSettled } from "./ap";
+import { effective, isPaidOrSent } from "./ap";
 import { callTool, replayRun, runLive } from "./agent-run";
 import { anthropic, claudeErrorMessage, claudeMode, MODEL } from "./claude";
 import { addDays, businessToday, daysBetween, fmtDay } from "./dates";
@@ -34,7 +34,7 @@ export function openInvoices(state: AppState, today: string): { open: OpenInvoic
   const held: DocumentRecord[] = [];
   let unreviewed = 0;
   for (const doc of state.documents) {
-    if (isSettled(doc)) continue;
+    if (isPaidOrSent(doc)) continue;
     const e = effective(doc);
     if (!e || !doc.review) {
       unreviewed++;

@@ -34,7 +34,7 @@ export default async function StorePage(props: PageProps<"/store/[supplier]">) {
           <IconArrowLeft size={13} /> Back to Supplora Pay
         </Link>
         <span className="mx-2 opacity-40">·</span>
-        You are viewing {supplier.name}&apos;s own online store (simulated merchant site)
+        You are viewing the online store of {supplier.name} (simulated merchant site)
       </div>
       <header style={{ background: accent }} className="text-white">
         <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-8 sm:flex-row sm:items-end sm:justify-between sm:px-8">

@@ -1,5 +1,5 @@
 import { RESTAURANT } from "@/data/seed";
-import { ACTION_LABEL, isSettled, withholdableCents } from "@/lib/ap";
+import { ACTION_LABEL, isPaidOrSent, withholdableCents } from "@/lib/ap";
 import { handleWrite, HttpError, readJson } from "@/lib/http";
 import { auditEntry, updateState } from "@/lib/state";
 import type { PayAction } from "@/lib/types";
@@ -17,7 +17,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/documents/[
       const doc = s.documents.find((d) => d.id === id);
       if (!doc) throw new HttpError("Document not found", 404);
       if (!doc.review) throw new HttpError("Review the document first.", 409);
-      if (isSettled(doc)) throw new HttpError("This invoice is already paid or being paid.", 409);
+      if (isPaidOrSent(doc)) throw new HttpError("This invoice has already been sent to PayPal or is being paid.", 409);
       // A partial payment only makes sense when there are line-level overcharges to withhold.
       // Without this, overriding a held invoice (duplicate / unknown supplier / changed details)
       // to "pay partial" would withhold nothing and pay it in full.

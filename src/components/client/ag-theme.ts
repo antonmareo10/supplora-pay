@@ -61,7 +61,8 @@ export const supploraTheme = themeQuartz.withParams({
 /** Status pill styling, mirroring the app's <Pill> tones (see ui.tsx). */
 export const STATUS_PILL: Record<PayableStatus, string> = {
   paid: "border-olive/25 bg-olive-soft text-olive",
-  sent: "border-ink/70 bg-ink text-paper",
+  // Amber, dashed: PayPal holds the money until the supplier claims it (distinct from "Pay partial").
+  sent: "border-dashed border-saffron/70 bg-card text-[#8a5a0c]",
   paying: "border-ledger/20 bg-ledger-soft text-ledger",
   failed: "border-terracotta/25 bg-terracotta-soft text-terracotta",
   held: "border-terracotta/25 bg-terracotta-soft text-terracotta",
