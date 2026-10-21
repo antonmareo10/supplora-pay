@@ -39,17 +39,17 @@ function SettlementTrail({ order }: { order: StoreOrder }) {
   const phase = orderPhase(order);
   const settled = phase === "captured" || phase === "voided" || phase === "refunded";
   const steps: { label: string; value: string; note: string; tone: string }[] = [
-    { label: "Authorized", value: fmt(auth.amountCents), note: `on the card on file · ${auth.id}`, tone: "text-ink" },
+    { label: "Authorized", value: fmt(auth.amountCents), note: "held on the card on file", tone: "text-ink" },
     settled
       ? {
           label: "Captured",
           value: fmt(order.capturedCents ?? 0),
-          note: order.delivery ? `delivery note ${order.delivery.noteNumber} confirmed` : "per PayPal",
+          note: order.delivery ? `what ${order.delivery.noteNumber} confirms` : "per PayPal",
           tone: "text-olive",
         }
       : { label: "Captured", value: "—", note: "when the delivery note is in", tone: "text-muted" },
     settled
-      ? { label: "Released", value: fmt(order.releasedCents ?? 0), note: phase === "voided" ? "authorization voided" : "final capture releases the rest", tone: "text-ink-2" }
+      ? { label: "Released", value: fmt(order.releasedCents ?? 0), note: phase === "voided" ? "authorization voided" : "back to the card", tone: "text-ink-2" }
       : { label: "Released", value: "—", note: "whatever did not arrive", tone: "text-muted" },
   ];
   return (
@@ -61,9 +61,7 @@ function SettlementTrail({ order }: { order: StoreOrder }) {
             {s.label}
           </p>
           <p className={cx("num text-base font-semibold", s.tone)}>{s.value}</p>
-          <p className="truncate text-[11px] text-muted" title={s.note}>
-            {s.note}
-          </p>
+          <p className="text-[11px] leading-snug text-muted">{s.note}</p>
         </li>
       ))}
     </ol>
@@ -91,6 +89,12 @@ export function OrderCard({ order, settleEnabled = true }: { order: StoreOrder; 
           <p className="text-xs text-muted">
             PayPal order <Mono>{order.id}</Mono>
             {order.intent === "AUTHORIZE" && <> · intent AUTHORIZE</>}
+            {order.authorization && (
+              <>
+                {" "}
+                · authorization <Mono>{order.authorization.id}</Mono>
+              </>
+            )}
             {order.captureId && (
               <>
                 {" "}

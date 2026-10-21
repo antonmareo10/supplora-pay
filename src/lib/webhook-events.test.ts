@@ -140,7 +140,7 @@ test("payout item: a cancelled or returned payout reopens the invoice and the pl
   const s = state();
   const r = applyPayoutItem(s, s.batches[0], { payout_item_id: "ITEM1", transaction_status: "CANCELED", sender_item_id: "doc-01" }, { source: "reconcile", at: AT });
   assert.equal(r.settled, true);
-  assert.equal(s.documents[0].payment.status, "failed");
+  assert.equal(s.documents[0].payment.status, "returned");
   assert.match(s.documents[0].payment.error!, /returned to the restaurant/);
   assert.equal(s.plans[0].payments[0].status, "failed");
   assert.equal(s.plans[0].status, "partially_paid");

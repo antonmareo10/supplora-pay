@@ -16,11 +16,14 @@ import type { AppState, AuditEntry, PaymentStatus, PayoutBatchRecord, PlannedPay
 
 const PAID_ITEM = ["SUCCESS"];
 const SENT_ITEM = ["UNCLAIMED"];
-const FAILED_ITEM = ["FAILED", "RETURNED", "BLOCKED", "REFUNDED", "REVERSED", "DENIED", "CANCELED"];
+/** The money came back to the restaurant: the invoice is unpaid again (and can be paid again). */
+const RETURNED_ITEM = ["RETURNED", "CANCELED"];
+const FAILED_ITEM = ["FAILED", "BLOCKED", "REFUNDED", "REVERSED", "DENIED"];
 
 export function itemToStatus(s: string): { doc: PaymentStatus; plan: PlannedPayment["status"] } {
   if (PAID_ITEM.includes(s)) return { doc: "paid", plan: "paid" };
   if (SENT_ITEM.includes(s)) return { doc: "unclaimed", plan: "unclaimed" };
+  if (RETURNED_ITEM.includes(s)) return { doc: "returned", plan: "failed" };
   if (FAILED_ITEM.includes(s)) return { doc: "failed", plan: "failed" };
   return { doc: "processing", plan: "processing" };
 }
@@ -85,11 +88,11 @@ export function applyPayoutItem(s: AppState, batch: PayoutBatchRecord, it: Payou
       payoutItemId: it.payout_item_id,
       transactionId: it.transaction_id ?? doc.payment.transactionId,
       at: by.at,
-      error: mapped.doc === "failed" ? failure : undefined,
+      error: mapped.doc === "failed" || mapped.doc === "returned" ? failure : undefined,
       updatedBy: by,
     };
     // A failed, returned or cancelled payout leaves the invoice unpaid, so it can be paid again.
-    if (mapped.doc === "failed") doc.payment = { status: "failed", error: failure, updatedBy: by };
+    if (mapped.doc === "failed" || mapped.doc === "returned") doc.payment = { status: mapped.doc, error: failure, updatedBy: by };
   }
   const p = plan?.payments.find((x) => x.docId === item.docId);
   if (p) {

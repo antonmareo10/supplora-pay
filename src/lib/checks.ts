@@ -192,7 +192,6 @@ export function runChecks(ex: Extraction, ref: ReferenceData, ctx: CheckContext)
       impactCents: invoiceCents,
       withholdCents: invoiceCents,
       evidence: [
-        { label: "On the document", value: clip(quote, 140) },
         { label: "Found in", value: [...new Set(injection.map((i) => i.field))].join(", ") },
         { label: "Treated as", value: "data: held, never followed" },
       ],

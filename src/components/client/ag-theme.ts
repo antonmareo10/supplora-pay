@@ -65,6 +65,7 @@ export const STATUS_PILL: Record<PayableStatus, string> = {
   sent: "border-dashed border-saffron/70 bg-card text-[#8a5a0c]",
   paying: "border-ledger/20 bg-ledger-soft text-ledger",
   failed: "border-terracotta/25 bg-terracotta-soft text-terracotta",
+  returned: "border-dashed border-line-2 bg-card text-ink-2",
   held: "border-terracotta/25 bg-terracotta-soft text-terracotta",
   disputed: "border-saffron/30 bg-saffron-soft text-[#8a5a0c]",
   pending: "border-line bg-paper text-ink-2",
