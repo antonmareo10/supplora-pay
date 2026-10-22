@@ -49,6 +49,13 @@ export default async function OverviewPage() {
     )
     .slice(0, 10);
 
+  // The week's most important catch: an invoice whose text tries to instruct the AI. It leads the page,
+  // with the facts the rules recorded (no figure is computed here).
+  const injected = findingsSource.documents
+    .map((d) => ({ doc: d, f: d.review?.findings.find((x) => x.kind === "suspicious_instruction") }))
+    .find((x): x is { doc: (typeof findingsSource.documents)[number]; f: NonNullable<typeof x.f> } => !!x.f);
+  const injectedPayee = injected?.doc.review?.findings.some((x) => x.kind === "payment_details_changed");
+
   const steps: { title: string; status: ReactNode; done: boolean; href: string; cta: string }[] = [
     {
       title: "Claude reviews every document",
@@ -146,7 +153,7 @@ export default async function OverviewPage() {
             </p>
             <p className="mt-3 max-w-md text-sm text-ink-2">
               {previewing
-                ? `What Supplora will protect once you review the ${s.documents} documents in your inbox — overcharges withheld and a double payment held — from Claude's recorded readings run through the rules${
+                ? `What Supplora will protect once you review the ${s.documents} documents in your inbox: overcharges withheld and a double payment held, from Claude's recorded readings run through the rules${
                     hero.discountsAvailableCents > 0 ? `, plus ${fmt(hero.discountsAvailableCents)} of early-payment discount to capture` : ""
                   }. Review the inbox to lock it in.`
                 : hero.protectedCents > 0
@@ -193,6 +200,34 @@ export default async function OverviewPage() {
           </dl>
         </div>
       </Card>
+
+      {injected && (
+        <Link
+          href={`/inbox/${injected.doc.id}`}
+          className="rise group flex flex-col gap-3 rounded-2xl border border-terracotta/30 bg-terracotta-soft/60 px-5 py-4 transition-colors hover:border-terracotta/60 sm:flex-row sm:items-center sm:gap-5"
+          style={{ animationDelay: "90ms" }}
+        >
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-terracotta text-white" aria-hidden="true">
+            <IconShield size={20} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[11px] font-semibold uppercase tracking-[0.16em] text-terracotta">
+              {previewing ? "Will be held" : "Held"} · prompt injection{injectedPayee ? " + new payee" : ""}
+            </span>
+            <span className="mt-0.5 block font-display text-xl leading-snug text-ink">
+              An invoice tells AI assistants to ignore their rules and pay {injectedPayee ? "a new PayPal account" : "it today"}.
+            </span>
+            <span className="mt-1 block text-sm text-ink-2">
+              {supplierById(injected.doc.review!.supplierId)?.name ?? injected.doc.review!.extraction.supplier_name} · {injected.doc.review!.extraction.invoice_number} ·{" "}
+              <span className="num font-semibold text-terracotta">{fmt(injected.f.impactCents || injected.doc.review!.invoiceCents)}</span>. Claude copies the
+              text as data, the payee can only come from your supplier directory, and the payment agent&rsquo;s own plan check refuses to pay it.
+            </span>
+          </span>
+          <span className="inline-flex shrink-0 items-center gap-1 text-sm font-semibold text-terracotta">
+            See how it was caught <IconArrowRight size={15} className="transition-transform group-hover:translate-x-0.5" />
+          </span>
+        </Link>
+      )}
 
       <section aria-labelledby="week">
         <SectionTitle id="week" kicker="This week's run" title="From inbox to paid, with you in control" />
