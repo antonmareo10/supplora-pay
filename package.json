@@ -8,7 +8,7 @@
     "start": "next start -p 3300",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "node --test --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/lib/checks.test.ts src/lib/ap.test.ts src/lib/paypal-toolkit.test.ts src/lib/demo-sweep.test.ts src/lib/write-limits.test.ts src/lib/settlement.test.ts src/lib/webhook-events.test.ts src/lib/plan-rules.test.ts src/lib/reconcile-view.test.ts src/lib/http-guards.test.ts src/lib/paypal-base.test.ts src/lib/order-checks.test.ts src/lib/serialize.test.ts src/lib/cart-api.test.ts src/lib/security-doc.test.ts",
+    "test": "node --test --disable-warning=MODULE_TYPELESS_PACKAGE_JSON src/lib/checks.test.ts src/lib/ap.test.ts src/lib/paypal-toolkit.test.ts src/lib/demo-sweep.test.ts src/lib/write-limits.test.ts src/lib/settlement.test.ts src/lib/webhook-events.test.ts src/lib/plan-rules.test.ts src/lib/reconcile-view.test.ts src/lib/http-guards.test.ts src/lib/paypal-base.test.ts src/lib/order-checks.test.ts src/lib/serialize.test.ts src/lib/cart-api.test.ts src/lib/security-doc.test.ts src/lib/breaker.test.ts",
     "samples": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-samples.mjs"
   },
   "dependencies": {

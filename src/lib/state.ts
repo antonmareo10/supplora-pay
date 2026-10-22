@@ -11,6 +11,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_SETTINGS, INITIAL_INVENTORY, SAMPLE_FILES } from "@/data/seed";
+import { Breaker } from "./breaker";
 import type { DemoPayoutEntry } from "./demo-sweep";
 import { currentStateKey } from "./session";
 import type { AppState, AuditEntry, DocumentRecord } from "./types";
@@ -82,22 +83,36 @@ function redisConfig(): { url: string; token: string } | null {
   return url && token ? { url: url.replace(/\/+$/, ""), token } : null;
 }
 
+// If Redis fails (outage, free-tier limit, bad token), the demo keeps working from this instance's memory
+// instead of erroring on every page: the store is skipped for a minute, then tried again.
+const redisBreaker = new Breaker(60_000);
+
+/** Redis is configured and not in its cool-down after a failure. */
+function redisUp(): boolean {
+  return !!redisConfig() && redisBreaker.up();
+}
+
 export function stateBackend(key: string): "file" | "memory" | "redis" {
   if (key === "default") return "file";
-  return redisConfig() ? "redis" : "memory";
+  return redisUp() ? "redis" : "memory";
 }
 
 async function redis(command: string[]): Promise<unknown> {
   const cfg = redisConfig()!;
-  const res = await fetch(cfg.url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(command),
-    signal: AbortSignal.timeout(8_000),
-  });
-  const json = (await res.json().catch(() => ({}))) as { result?: unknown; error?: string };
-  if (!res.ok || json.error) throw new Error(`State store (Redis) error: ${json.error ?? res.status}`);
-  return json.result;
+  try {
+    const res = await fetch(cfg.url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(command),
+      signal: AbortSignal.timeout(8_000),
+    });
+    const json = (await res.json().catch(() => ({}))) as { result?: unknown; error?: string };
+    if (!res.ok || json.error) throw new Error(`State store (Redis) error: ${json.error ?? res.status}`);
+    return json.result;
+  } catch (err) {
+    if (redisBreaker.trip()) console.warn("[state] Redis unavailable, using this instance's memory for a minute:", err instanceof Error ? err.message : err);
+    throw err;
+  }
 }
 
 const redisKey = (key: string) => `supplora-pay:state:${key}`;
@@ -110,8 +125,12 @@ async function loadFrom(key: string, slot: Slot): Promise<AppState> {
   }
   if (backend === "redis") {
     // Always read fresh: another serverless instance may have written this session.
-    const raw = (await redis(["GET", redisKey(key)])) as string | null;
-    slot.state = raw ? revive(JSON.parse(raw) as AppState) : initialState();
+    try {
+      const raw = (await redis(["GET", redisKey(key)])) as string | null;
+      slot.state = raw ? revive(JSON.parse(raw) as AppState) : initialState();
+    } catch {
+      slot.state ??= initialState(); // Redis is down: carry on from this instance's memory
+    }
     return slot.state;
   }
   if (slot.state) return slot.state;
@@ -129,7 +148,8 @@ async function persistTo(key: string, state: AppState): Promise<void> {
   const backend = stateBackend(key);
   if (backend === "memory") return;
   if (backend === "redis") {
-    await redis(["SET", redisKey(key), JSON.stringify(state), "EX", String(SESSION_TTL_MS / 1000)]);
+    // If Redis is down the new state still lives in this instance's memory (the caller keeps it in the slot).
+    await redis(["SET", redisKey(key), JSON.stringify(state), "EX", String(SESSION_TTL_MS / 1000)]).catch(() => undefined);
     return;
   }
   await fs.mkdir(DATA_DIR, { recursive: true });
@@ -203,7 +223,11 @@ export async function stateExists(key: string): Promise<boolean> {
   const backend = stateBackend(key);
   if (backend === "file") return true;
   if (backend === "memory") return !!slots.get(key)?.state;
-  return ((await redis(["EXISTS", redisKey(key)])) as number) === 1;
+  try {
+    return ((await redis(["EXISTS", redisKey(key)])) as number) === 1;
+  } catch {
+    return !!slots.get(key)?.state;
+  }
 }
 
 export async function resetState(): Promise<void> {
@@ -227,18 +251,28 @@ const REGISTRY_TTL_S = 31 * 24 * 60 * 60;
 const memoryRegistry: Map<string, DemoPayoutEntry> = (g.__supploraDemoPayouts ??= new Map());
 
 export async function registerDemoPayout(entry: DemoPayoutEntry): Promise<void> {
-  if (redisConfig()) {
-    await redis(["HSET", REGISTRY_KEY, entry.batchId, JSON.stringify(entry)]);
-    await redis(["EXPIRE", REGISTRY_KEY, String(REGISTRY_TTL_S)]);
-    return;
+  if (redisUp()) {
+    try {
+      await redis(["HSET", REGISTRY_KEY, entry.batchId, JSON.stringify(entry)]);
+      await redis(["EXPIRE", REGISTRY_KEY, String(REGISTRY_TTL_S)]);
+      return;
+    } catch {
+      /* Redis is down: keep it in memory below */
+    }
   }
   memoryRegistry.set(entry.batchId, entry);
 }
 
 export async function listDemoPayouts(): Promise<DemoPayoutEntry[]> {
-  if (!redisConfig()) return [...memoryRegistry.values()];
-  const flat = ((await redis(["HGETALL", REGISTRY_KEY])) as string[] | null) ?? [];
-  const out: DemoPayoutEntry[] = [];
+  if (!redisUp()) return [...memoryRegistry.values()];
+  let flat: string[];
+  try {
+    flat = ((await redis(["HGETALL", REGISTRY_KEY])) as string[] | null) ?? [];
+  } catch {
+    return [...memoryRegistry.values()];
+  }
+  // Plus anything this instance kept in memory while Redis was down.
+  const out: DemoPayoutEntry[] = [...memoryRegistry.values()];
   for (let i = 1; i < flat.length; i += 2) {
     try {
       out.push(JSON.parse(flat[i]) as DemoPayoutEntry);
@@ -250,8 +284,8 @@ export async function listDemoPayouts(): Promise<DemoPayoutEntry[]> {
 }
 
 export async function forgetDemoPayout(batchId: string): Promise<void> {
-  if (redisConfig()) await redis(["HDEL", REGISTRY_KEY, batchId]);
-  else memoryRegistry.delete(batchId);
+  memoryRegistry.delete(batchId);
+  if (redisUp()) await redis(["HDEL", REGISTRY_KEY, batchId]).catch(() => undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -273,10 +307,14 @@ export async function indexPayPalResources(ids: (string | undefined | null)[]): 
   if (!list.length) return;
   try {
     const key = await currentStateKey();
-    if (redisConfig()) {
-      await redis(["HSET", RESOURCE_KEY, ...list.flatMap((id) => [id, key])]);
-      await redis(["EXPIRE", RESOURCE_KEY, String(REGISTRY_TTL_S)]);
-      return;
+    if (redisUp()) {
+      try {
+        await redis(["HSET", RESOURCE_KEY, ...list.flatMap((id) => [id, key])]);
+        await redis(["EXPIRE", RESOURCE_KEY, String(REGISTRY_TTL_S)]);
+        return;
+      } catch {
+        /* Redis is down: keep the index in memory below */
+      }
     }
     for (const id of list) memoryResources.set(id, key);
     while (memoryResources.size > MAX_MEMORY_RESOURCES) memoryResources.delete(memoryResources.keys().next().value!);
@@ -288,13 +326,16 @@ export async function indexPayPalResources(ids: (string | undefined | null)[]): 
 /** The session that owns the first of these PayPal ids we know, or null. */
 export async function sessionForPayPalResources(ids: string[]): Promise<string | null> {
   if (!ids.length) return null;
-  if (redisConfig()) {
-    const found = ((await redis(["HMGET", RESOURCE_KEY, ...ids])) as (string | null)[] | null) ?? [];
-    const hit = found.find((v) => !!v);
-    if (hit) return hit;
-    // Payout batches sent before the index existed are still in the demo payout registry.
-    for (const e of await listDemoPayouts()) if (ids.includes(e.batchId)) return e.key;
-    return null;
+  if (redisUp()) {
+    try {
+      const found = ((await redis(["HMGET", RESOURCE_KEY, ...ids])) as (string | null)[] | null) ?? [];
+      const hit = found.find((v) => !!v);
+      if (hit) return hit;
+      // Payout batches sent before the index existed are still in the demo payout registry.
+      for (const e of await listDemoPayouts()) if (ids.includes(e.batchId)) return e.key;
+    } catch {
+      /* Redis is down: look in memory below */
+    }
   }
   for (const id of ids) {
     const key = memoryResources.get(id);
@@ -306,9 +347,13 @@ export async function sessionForPayPalResources(ids: string[]): Promise<string |
 
 /** Claim a webhook event id; false when it was already processed (PayPal retries and duplicates). */
 export async function claimWebhookEvent(eventId: string): Promise<boolean> {
-  if (redisConfig()) {
-    const res = await redis(["SET", `${EVENTS_KEY}:${eventId}`, "1", "NX", "EX", String(EVENT_TTL_S)]);
-    return res === "OK";
+  if (redisUp()) {
+    try {
+      const res = await redis(["SET", `${EVENTS_KEY}:${eventId}`, "1", "NX", "EX", String(EVENT_TTL_S)]);
+      return res === "OK";
+    } catch {
+      /* Redis is down: de-duplicate in memory below */
+    }
   }
   const now = Date.now();
   for (const [id, at] of memoryEvents) if (now - at > EVENT_TTL_S * 1000) memoryEvents.delete(id);
@@ -319,8 +364,8 @@ export async function claimWebhookEvent(eventId: string): Promise<boolean> {
 
 /** Processing failed after the claim: let PayPal's retry try again. */
 export async function releaseWebhookEvent(eventId: string): Promise<void> {
-  if (redisConfig()) await redis(["DEL", `${EVENTS_KEY}:${eventId}`]).catch(() => undefined);
-  else memoryEvents.delete(eventId);
+  memoryEvents.delete(eventId);
+  if (redisUp()) await redis(["DEL", `${EVENTS_KEY}:${eventId}`]).catch(() => undefined);
 }
 
 export function auditEntry(entry: Omit<AuditEntry, "id" | "at">): AuditEntry {
