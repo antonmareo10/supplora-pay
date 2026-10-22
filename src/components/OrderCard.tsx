@@ -2,10 +2,11 @@ import Link from "next/link";
 import { supplierById } from "@/data/seed";
 import { fmtDateTime } from "@/lib/dates";
 import { fmt } from "@/lib/money";
-import { orderPhase, planSettlement, scriptedDelivery } from "@/lib/settlement";
+import { orderPhase, planRefund, planSettlement, scriptedDamage, scriptedDelivery } from "@/lib/settlement";
 import type { StoreOrder } from "@/lib/types";
 import { updatedByLabel, webhookSeenLabel } from "@/lib/webhook-events";
 import { DeliveryActions } from "./client/DeliveryActions";
+import { RefundActions } from "./client/RefundActions";
 import { IconExternal } from "./icons";
 import { cx, Mono, Pill, type Tone } from "./ui";
 
@@ -79,6 +80,17 @@ export function OrderCard({ order, settleEnabled = true }: { order: StoreOrder; 
     phase === "authorized" && order.authorization && !order.delivery
       ? planSettlement(order.lines, order.authorization.amountCents, scriptedDelivery(order.lines))
       : null;
+  // After the capture: the demo's scripted damage report and what refunding it would cost (same code as the refund).
+  const damage = settleEnabled ? scriptedDamage(order) : null;
+  let damageCents: number | null = null;
+  if (damage) {
+    try {
+      damageCents = planRefund(order, damage.sku, damage.qty).amountCents;
+    } catch {
+      damageCents = null;
+    }
+  }
+  const refunded = order.refundedCents ?? 0;
   return (
     <article className="overflow-hidden rounded-xl border border-line bg-card">
       <header className="flex flex-wrap items-start justify-between gap-2 border-b border-line px-4 py-3" style={{ borderTop: `3px solid ${supplier?.store?.accent ?? "var(--ledger)"}`, borderTopLeftRadius: 12, borderTopRightRadius: 12 }}>
@@ -157,6 +169,25 @@ export function OrderCard({ order, settleEnabled = true }: { order: StoreOrder; 
           {order.delivery.scripted && <> · scripted demo delivery (in production Supplora captures the signed note at the kitchen door)</>}
         </p>
       )}
+      {order.refunds && order.refunds.length > 0 && (
+        <div className="border-t border-line bg-paper/50 px-4 py-2.5 text-xs">
+          {order.refunds.map((r) => (
+            <p key={r.id} className="text-ink-2">
+              <span className="font-semibold text-ink">Refunded {fmt(r.amountCents)}</span>
+              {r.reason && <> · {r.reason}</>} · refund <Mono>{r.id}</Mono> {r.status}
+              {r.scripted && <> · scripted demo damage report</>}
+              {r.confirmedBy && <> · confirmed by {r.confirmedBy}</>}
+            </p>
+          ))}
+          {order.capturedCents != null && (
+            <p className="mt-1 text-muted">
+              Captured {fmt(order.capturedCents)} − refunded {fmt(refunded)} ={" "}
+              <span className="num font-semibold text-ink">{fmt(Math.max(0, order.capturedCents - refunded))}</span> paid for this order
+            </p>
+          )}
+        </div>
+      )}
+      {damage && damageCents != null && <RefundActions orderId={order.id} reason={damage.reason} amountCents={damageCents} />}
       {preview && settleEnabled && (
         <DeliveryActions orderId={order.id} authorizedCents={preview.authorizedCents} captureCents={preview.captureCents} releaseCents={preview.releaseCents} shortages={preview.shortages} />
       )}

@@ -129,11 +129,11 @@ export function orderPhase(o: StoreOrder): OrderPhase {
   return "approving";
 }
 
-/** Money actually taken for an order (captured), in cents. */
+/** Money actually taken for an order (captured, less anything refunded), in cents. */
 export function orderPaidCents(o: StoreOrder): number {
   const phase = orderPhase(o);
-  if (o.intent === "AUTHORIZE") return phase === "captured" ? (o.capturedCents ?? 0) : 0;
-  return phase === "paid" ? o.totalCents : 0;
+  if (o.intent === "AUTHORIZE") return phase === "captured" ? Math.max(0, (o.capturedCents ?? 0) - (o.refundedCents ?? 0)) : 0;
+  return phase === "paid" ? Math.max(0, o.totalCents - (o.refundedCents ?? 0)) : 0;
 }
 
 /** Money on hold on the card (authorized, waiting for the delivery note), in cents. */
@@ -145,4 +145,54 @@ export function orderHeldCents(o: StoreOrder): number {
 /** An approved order: authorized, settled or paid (shown in order history, counted in the ledger). */
 export function orderApproved(o: StoreOrder): boolean {
   return ["authorized", "settling", "captured", "voided", "paid", "refunded"].includes(orderPhase(o));
+}
+
+// ---------------------------------------------------------------------------
+// After the capture: goods that arrived damaged are refunded on the capture, never more than what was
+// delivered and paid for that line, and never more than was captured in total.
+
+/** Units of a line already refunded on this order. */
+function refundedUnits(o: StoreOrder, sku: string): number {
+  return (o.refunds ?? []).filter((r) => r.sku === sku && r.status !== "FAILED" && r.status !== "CANCELLED").reduce((s, r) => s + (r.qty ?? 0), 0);
+}
+
+export interface RefundPlan {
+  sku: string;
+  name: string;
+  qty: number;
+  amountCents: number;
+  /** The n-th refund on this line (0-based): part of the idempotency key, so a retry never refunds twice. */
+  step: number;
+}
+
+/**
+ * Plan a refund for damaged units of one line of a captured order. Amounts are the order's own unit
+ * prices incl. VAT (the cents PayPal was sent).
+ */
+export function planRefund(o: StoreOrder, sku: string, qty: number): RefundPlan {
+  if (o.intent !== "AUTHORIZE" || !o.captureId || orderPhase(o) !== "captured") throw new SettlementError("Only goods that were delivered and captured can be refunded.");
+  const line = o.lines.find((l) => l.sku === sku);
+  if (!line) throw new SettlementError(`${sku} is not on this order.`);
+  if (!Number.isInteger(qty) || qty < 1) throw new SettlementError("Refund at least one whole unit.");
+  const delivered = o.delivery?.lines.find((l) => l.sku === sku)?.delivered ?? 0;
+  const already = refundedUnits(o, sku);
+  if (qty > delivered - already) {
+    throw new SettlementError(`Only ${Math.max(0, delivered - already)} × ${line.name} can still be refunded (${delivered} delivered, ${already} refunded).`);
+  }
+  const amountCents = unitGrossCents(line) * qty;
+  const captured = o.capturedCents ?? 0;
+  if ((o.refundedCents ?? 0) + amountCents > captured) throw new SettlementError(`Refunds would exceed the ${fmt(captured)} captured.`);
+  return { sku, name: line.name, qty, amountCents, step: (o.refunds ?? []).filter((r) => r.sku === sku).length };
+}
+
+/**
+ * The public demo's scripted damage report: one unit of the most expensive line that was delivered
+ * arrived damaged (ties: the first). Null when nothing can be refunded any more.
+ */
+export function scriptedDamage(o: StoreOrder): { sku: string; qty: number; reason: string } | null {
+  if (o.intent !== "AUTHORIZE" || orderPhase(o) !== "captured" || !o.delivery) return null;
+  const candidates = o.lines.filter((l) => (o.delivery!.lines.find((d) => d.sku === l.sku)?.delivered ?? 0) - refundedUnits(o, l.sku) > 0);
+  const line = candidates.reduce<CartLine | null>((best, l) => (!best || unitGrossCents(l) > unitGrossCents(best) ? l : best), null);
+  if (!line || (o.refunds ?? []).some((r) => r.scripted)) return null;
+  return { sku: line.sku, qty: 1, reason: `1 × ${line.name} arrived damaged (container split)` };
 }

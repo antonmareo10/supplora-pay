@@ -2,7 +2,7 @@
 // "Pay only for what arrived": the capture is decided in code from the order lines and the delivery note.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { nothingDelivered, orderHeldCents, orderPaidCents, orderPhase, planSettlement, scriptedDelivery, SettlementError, unitGrossCents } from "./settlement.ts";
+import { nothingDelivered, orderHeldCents, orderPaidCents, orderPhase, planRefund, planSettlement, scriptedDamage, scriptedDelivery, SettlementError, unitGrossCents } from "./settlement.ts";
 import { pctOf } from "./money.ts";
 import type { CartLine, StoreOrder } from "./types.ts";
 
@@ -82,4 +82,47 @@ test("order phases: the owner's checkout orders (intent CAPTURE, or older orders
   assert.equal(orderPhase(legacy), "paid");
   assert.equal(orderPaidCents(legacy), TOTAL);
   assert.equal(orderPhase({ ...legacy, status: "CREATED", captureId: undefined, error: "declined" }), "failed");
+});
+
+// After the capture: the scripted delivery (one sanitiser short) was captured at €141.09.
+const delivered = scriptedDelivery(ORDER);
+const CAPTURED: StoreOrder = {
+  ...base,
+  status: "COMPLETED",
+  authorization: { id: "AUTH1", status: "CAPTURED", amountCents: TOTAL, createdAt: "" },
+  captureId: "CAP1AAAAAAA",
+  captureStatus: "COMPLETED",
+  capturedCents: 14109,
+  releasedCents: 387,
+  delivery: {
+    noteNumber: "DN-1",
+    receivedAt: "",
+    receivedBy: "kitchen",
+    scripted: true,
+    lines: ORDER.map((l) => ({ sku: l.sku, name: l.name, ordered: l.qty, delivered: delivered[l.sku], unitGrossCents: unitGrossCents(l) })),
+    confirmedCents: 14109,
+  },
+};
+
+test("refunds: damaged goods are refunded at the order's unit price incl. VAT (one detergent: €46.59)", () => {
+  const d = scriptedDamage(CAPTURED);
+  assert.deepEqual(d && { sku: d.sku, qty: d.qty }, { sku: "CP-DW-20", qty: 1 }, "the most expensive delivered line");
+  const r = planRefund(CAPTURED, "CP-DW-20", 1);
+  assert.equal(r.amountCents, 3850 + 809);
+  assert.equal(r.step, 0);
+  const after: StoreOrder = { ...CAPTURED, refundedCents: r.amountCents, captureStatus: "PARTIALLY_REFUNDED", refunds: [{ id: "R1", status: "COMPLETED", amountCents: r.amountCents, at: "", source: "app", sku: "CP-DW-20", qty: 1, scripted: true }] };
+  assert.equal(orderPhase(after), "captured");
+  assert.equal(orderPaidCents(after), 14109 - 4659, "paid = captured − refunded");
+  assert.equal(scriptedDamage(after), null, "the demo refunds once");
+});
+
+test("refunds: never more than was delivered on the line, never more than was captured, never before the capture", () => {
+  assert.throws(() => planRefund(CAPTURED, "CP-SAN-750", 7), SettlementError, "7 ordered but only 6 delivered");
+  assert.equal(planRefund(CAPTURED, "CP-SAN-750", 6).amountCents, 6 * (320 + 67));
+  const twice: StoreOrder = { ...CAPTURED, refunds: [{ id: "R1", status: "COMPLETED", amountCents: 9318, at: "", source: "app", sku: "CP-DW-20", qty: 2 }], refundedCents: 9318 };
+  assert.throws(() => planRefund(twice, "CP-DW-20", 1), SettlementError, "both detergents already refunded");
+  assert.throws(() => planRefund({ ...CAPTURED, refundedCents: 14109 - 100 }, "CP-DW-20", 1), SettlementError, "over the captured total");
+  assert.throws(() => planRefund({ ...CAPTURED, captureId: undefined, captureStatus: undefined, authorization: { ...CAPTURED.authorization!, status: "CREATED" } }, "CP-DW-20", 1), SettlementError);
+  assert.throws(() => planRefund(CAPTURED, "CP-NOPE", 1), SettlementError);
+  assert.throws(() => planRefund(CAPTURED, "CP-DW-20", 0), SettlementError);
 });

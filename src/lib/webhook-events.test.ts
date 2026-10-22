@@ -211,3 +211,27 @@ test("events about payments this ledger does not hold change nothing", () => {
   assert.equal(r1.changed || r2.changed, false);
   assert.equal(JSON.stringify(s), before);
 });
+
+test("refund webhooks: a refund the app already recorded is only confirmed, never counted twice", () => {
+  const s = state();
+  applyWebhookEvent(
+    s,
+    event("PAYMENT.CAPTURE.COMPLETED", { id: "CAP1AAAAAAA", status: "COMPLETED", amount: { value: "141.09", currency_code: "EUR" }, final_capture: true, supplementary_data: { related_ids: { order_id: "ORDER1AAAAAA", authorization_id: "AUTH1AAAAAAA" } } }),
+    AT,
+  );
+  const o = s.orders[0];
+  // The app's own damaged-goods refund, recorded from PayPal's answer.
+  o.refunds = [{ id: "REFAPP00001", status: "COMPLETED", amountCents: 4659, at: AT, source: "app", sku: "CP-DW-20", qty: 1, scripted: true }];
+  o.refundedCents = 4659;
+  const up = [{ rel: "up", href: "https://api.sandbox.paypal.com/v2/payments/captures/CAP1AAAAAAA" }];
+  const again = applyWebhookEvent(s, event("PAYMENT.CAPTURE.REFUNDED", { id: "REFAPP00001", status: "COMPLETED", amount: { value: "46.59" }, links: up }, "WH-9"), AT);
+  assert.equal(again.changed, false);
+  assert.equal(o.refundedCents, 4659);
+  assert.equal(o.refunds[0].confirmedBy, "PAYMENT.CAPTURE.REFUNDED");
+  // A refund made elsewhere (say, in the PayPal dashboard) is added once, by id.
+  const other = applyWebhookEvent(s, event("PAYMENT.CAPTURE.REFUNDED", { id: "REFDASH0001", status: "COMPLETED", amount: { value: "3.87" }, links: up }, "WH-10"), AT);
+  assert.equal(other.changed, true);
+  applyWebhookEvent(s, event("PAYMENT.CAPTURE.REFUNDED", { id: "REFDASH0001", status: "COMPLETED", amount: { value: "3.87" }, links: up }, "WH-11"), AT);
+  assert.equal(o.refundedCents, 4659 + 387);
+  assert.deepEqual(o.refunds.map((r) => r.id), ["REFAPP00001", "REFDASH0001"]);
+});

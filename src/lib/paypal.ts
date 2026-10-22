@@ -492,6 +492,35 @@ export async function voidAuthorization(authorizationId: string, ref: AuditEntry
   return { id: res.id ?? authorizationId, status: res.status ?? "VOIDED", amount: res.amount, expiration_time: res.expiration_time };
 }
 
+export interface RefundResponse {
+  id: string;
+  status: string;
+  amount?: { value: string; currency_code?: string };
+}
+
+/**
+ * Refund part of a capture (goods that arrived damaged). The request id is derived from the capture,
+ * the line and how many refunds that line already had, so a retry or a double click never refunds twice.
+ */
+export async function refundCapture(input: { captureId: string; amountCents: number; requestKey: string; invoiceId: string; note: string; ref: AuditEntry["ref"] }): Promise<RefundResponse> {
+  if (!AUTH_ID.test(input.captureId)) throw new PayPalError("Invalid capture id", 400);
+  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) throw new PayPalError("Refund amount must be positive", 400);
+  return request<RefundResponse>({
+    method: "POST",
+    path: `/v2/payments/captures/${input.captureId}/refund`,
+    requestId: `refund-${input.captureId}-${input.requestKey}`.slice(0, 100),
+    label: "Refunded damaged goods on the capture (partial refund)",
+    ref: input.ref,
+    amountCents: input.amountCents,
+    resourceId: (j) => `${input.captureId} → refund ${j.id} ${j.status}`,
+    body: {
+      amount: { currency_code: "EUR", value: toDecimalString(input.amountCents) },
+      invoice_id: input.invoiceId.slice(0, 127),
+      note_to_payer: input.note.slice(0, 255),
+    },
+  });
+}
+
 export async function getAuthorization(authorizationId: string, ref: AuditEntry["ref"]): Promise<AuthorizationResponse> {
   if (!AUTH_ID.test(authorizationId)) throw new PayPalError("Invalid authorization id", 400);
   return request<AuthorizationResponse>({

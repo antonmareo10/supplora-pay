@@ -25,6 +25,7 @@ import {
   firstAuthorization,
   firstCapture,
   PayPalError,
+  refundCapture,
   voidAuthorization,
 } from "./paypal";
 import { checkOrderMatches } from "./order-checks";
@@ -32,7 +33,7 @@ import { serializer } from "./serialize";
 import { openToolkit, orderFacts, withToolkit, type ToolkitConnection, type ToolkitResult } from "./paypal-toolkit";
 import { RESTOCK_AGENT_TOOLKIT_TOOLS } from "./paypal-toolkit-policy";
 import { fingerprint, recordedRun, recordMode, type RecordedCall } from "./recordings";
-import { nothingDelivered, orderApproved, planSettlement, scriptedDelivery, SettlementError, type SettlementPlan } from "./settlement";
+import { nothingDelivered, orderApproved, planRefund, planSettlement, scriptedDamage, scriptedDelivery, SettlementError, type SettlementPlan } from "./settlement";
 import { auditEntry, indexPayPalResources, newId, readState, updateState } from "./state";
 import { checkoutCart, createCart, replaceCart } from "./store-carts";
 import type { AgentEvent, AppState, CartLine, StoreOrder } from "./types";
@@ -711,6 +712,87 @@ export async function settleDelivery(orderId: string, outcome: "scripted" | "not
             : `Nothing arrived: authorization ${auth.id} voided, all ${fmt(plan.authorizedCents)} released to the card.`,
         ref,
         amountCents: plan.captureCents,
+      }),
+    );
+    return o;
+  });
+}
+
+/**
+ * After the capture, the kitchen reports goods that arrived damaged: refund them on the capture
+ * (PayPal Payments v2 refund), at the order's own unit price incl. VAT, never more than was delivered
+ * and captured. In the public demo the damage report is scripted (one unit of the most expensive
+ * delivered line) and labelled as such.
+ */
+export async function refundDamagedItem(orderId: string): Promise<StoreOrder> {
+  const startedAt = new Date().toISOString();
+  const { order, damage, plan } = await updateState((s) => {
+    const o = s.orders.find((x) => x.id === orderId);
+    if (!o) throw new CommerceError("Order not found.", 404);
+    if (o.refundingSince && Date.now() - Date.parse(o.refundingSince) < 120_000) throw new CommerceError("A refund for this order is already in progress.", 409);
+    const d = scriptedDamage(o);
+    if (!d) throw new CommerceError("There is nothing on this order left to refund in the demo.", 409);
+    let p;
+    try {
+      p = planRefund(o, d.sku, d.qty);
+    } catch (err) {
+      throw new CommerceError(err instanceof SettlementError ? err.message : "Could not plan the refund.", 409);
+    }
+    o.refundingSince = startedAt;
+    o.error = undefined;
+    return { order: structuredClone(o), damage: d, plan: p };
+  });
+  const supplier = supplierById(order.supplierId)?.name ?? order.supplierId;
+  const ref = { orderId, proposalId: order.proposalId };
+  let refund;
+  try {
+    refund = await refundCapture({
+      captureId: order.captureId!,
+      amountCents: plan.amountCents,
+      requestKey: `${plan.sku}-${plan.step}`,
+      invoiceId: `${orderId}-RF-${plan.sku}-${plan.step + 1}`,
+      note: `${damage.reason}. Refunded at the price on the order.`,
+      ref,
+    });
+  } catch (err) {
+    const message = err instanceof PayPalError ? err.message : err instanceof Error ? err.message : "PayPal error";
+    await updateState((s) => {
+      const o = s.orders.find((x) => x.id === orderId);
+      if (o) {
+        o.refundingSince = undefined;
+        o.error = `Refund not made: ${message}`;
+      }
+    });
+    throw new CommerceError(`PayPal did not make the refund: ${message}`, 502);
+  }
+  await indexPayPalResources([refund.id]);
+  return updateState((s) => {
+    const o = s.orders.find((x) => x.id === orderId)!;
+    const at = new Date().toISOString();
+    o.refundingSince = undefined;
+    // A verified webhook may already have reported this very refund: keep one entry per refund id.
+    if (!o.refunds?.some((r) => r.id === refund.id)) {
+      (o.refunds ??= []).push({ id: refund.id, status: refund.status, amountCents: plan.amountCents, at, source: "app", sku: plan.sku, qty: plan.qty, reason: damage.reason, scripted: true });
+      o.refundedCents = Math.min(o.capturedCents ?? 0, (o.refundedCents ?? 0) + plan.amountCents);
+    } else {
+      const r = o.refunds.find((x) => x.id === refund.id)!;
+      Object.assign(r, { sku: plan.sku, qty: plan.qty, reason: damage.reason, scripted: true });
+    }
+    o.captureStatus = (o.refundedCents ?? 0) >= (o.capturedCents ?? 0) ? "REFUNDED" : "PARTIALLY_REFUNDED";
+    o.updatedBy = { source: "app", at };
+    const item = s.inventory.find((i) => i.sku === plan.sku);
+    if (item) item.onHand = Math.max(0, item.onHand - plan.qty);
+    s.audit.push(
+      auditEntry({
+        actor: "system",
+        message: `Damage report from the kitchen at ${supplier} (scripted demo event): ${damage.reason}. Stock corrected.`,
+        ref,
+      }),
+      auditEntry({
+        actor: "system",
+        message: `Refunded on PayPal: ${fmt(plan.amountCents)} on capture ${o.captureId} (refund ${refund.id} ${refund.status}). Captured ${fmt(o.capturedCents ?? 0)}, refunded ${fmt(o.refundedCents ?? 0)}, paid ${fmt((o.capturedCents ?? 0) - (o.refundedCents ?? 0))}.`,
+        ref,
+        amountCents: plan.amountCents,
       }),
     );
     return o;

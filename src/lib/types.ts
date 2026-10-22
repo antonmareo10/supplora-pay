@@ -365,8 +365,12 @@ export interface StoreOrder {
   capturedCents?: number;
   /** AUTHORIZE intent: authorized but never captured (returned to the card). */
   releasedCents?: number;
-  /** Refunded on PayPal after capture (reported by a verified webhook or reconciliation). */
+  /** Refunded on PayPal after capture: by the app (damaged goods) or reported by a verified webhook or reconciliation. */
   refundedCents?: number;
+  /** Each refund on the capture, by PayPal refund id (a webhook about a refund already here changes nothing). */
+  refunds?: OrderRefund[];
+  /** Set while a refund is in flight (guards double clicks). */
+  refundingSince?: string;
   /**
    * PayPal Cart API: the supplier store's cart behind this order (purchasing-agent orders). The
    * order id above is the cart's payment token; checkout completes the cart after the owner approves.
@@ -378,6 +382,24 @@ export interface StoreOrder {
   updatedBy?: StatusUpdate;
   /** The latest verified PayPal webhook about this order, whether or not it changed the status. */
   lastWebhook?: WebhookSeen;
+}
+
+export interface OrderRefund {
+  /** PayPal refund id. */
+  id: string;
+  /** PayPal refund status: COMPLETED, PENDING, CANCELLED, FAILED. */
+  status: string;
+  amountCents: number;
+  at: string;
+  /** Who recorded it: the app's own refund request, or a verified webhook for a refund made elsewhere. */
+  source: "app" | "webhook";
+  sku?: string;
+  qty?: number;
+  reason?: string;
+  /** Public demo: a scripted damage report (labelled as such). */
+  scripted?: boolean;
+  /** The verified webhook that later confirmed a refund the app had already recorded. */
+  confirmedBy?: string;
 }
 
 export interface OrderAuthorization {

@@ -105,14 +105,17 @@ Proven by:
 - `cart-api.test.ts` "cart api: unknown, duplicate, out-of-range and out-of-stock items come back as issues to resolve"
 - `cart-api.test.ts` "cart api: a body that is not a cart is a 400 INVALID_REQUEST envelope, not a cart"
 
-## T10. Capturing more than arrived, or capturing twice
+## T10. Capturing more than arrived, refunding more than was paid, or doing either twice
 
 - The capture is computed in code from the order's own prices and what the signed delivery note confirms; it is one final partial capture whose idempotency key is derived from the authorization, and notes that would pay more than was ordered or authorized are refused.
+- A refund for damaged goods is priced from the order's own lines, limited to what was delivered on that line and to what was captured, and keyed by capture, line and step so a retry never refunds twice. A refund webhook for a refund the ledger already holds only confirms it.
 
 Proven by:
 - `settlement.test.ts` "settlement: the scripted delivery is one sanitiser short → capture €141.09, release €3.87"
 - `settlement.test.ts` "settlement: refuses notes that would pay more than was ordered or authorized"
 - `settlement.test.ts` "settlement: nothing arrived → void the whole authorization"
+- `settlement.test.ts` "refunds: never more than was delivered on the line, never more than was captured, never before the capture"
+- `webhook-events.test.ts` "refund webhooks: a refund the app already recorded is only confirmed, never counted twice"
 
 ## T11. Forged, replayed or out-of-order webhooks
 

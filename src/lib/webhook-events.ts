@@ -178,11 +178,21 @@ export function applyCaptureStatus(o: StoreOrder, cap: { id: string; status: str
   return true;
 }
 
-/** A refund on a captured order (PAYMENT.CAPTURE.REFUNDED carries the refund, linked "up" to its capture). */
-export function applyRefund(o: StoreOrder, refundCents: number, by: StatusUpdate): boolean {
+/**
+ * A refund on a captured order (PAYMENT.CAPTURE.REFUNDED carries the refund, linked "up" to its
+ * capture). Refunds are kept by PayPal refund id: a webhook about a refund the app already recorded
+ * (its own damaged-goods refund) only confirms it, so the amount is never counted twice.
+ */
+export function applyRefund(o: StoreOrder, refundCents: number, by: StatusUpdate, refundId?: string): boolean {
+  const known = refundId ? o.refunds?.find((r) => r.id === refundId) : undefined;
+  if (known) {
+    known.confirmedBy = by.eventType ?? by.source;
+    return false;
+  }
   const captured = o.intent === "AUTHORIZE" ? (o.capturedCents ?? 0) : o.totalCents;
   o.refundedCents = Math.min(captured, (o.refundedCents ?? 0) + refundCents);
   o.captureStatus = o.refundedCents >= captured ? "REFUNDED" : "PARTIALLY_REFUNDED";
+  if (refundId) (o.refunds ??= []).push({ id: refundId, status: "COMPLETED", amountCents: refundCents, at: by.at, source: "webhook" });
   o.updatedBy = by;
   return true;
 }
@@ -352,13 +362,17 @@ export function applyWebhookEvent(s: AppState, e: PayPalWebhookEvent, at: string
     const order = findOrder(captureId, orderId);
     const amount = cents((r.amount as { value?: unknown } | undefined)?.value);
     if (!order || amount == null) return { changed: false, settled: false, note: `${verified}: no matching capture in this ledger` };
-    applyRefund(order, amount, by);
+    const changed = applyRefund(order, amount, by, str(r.id));
     order.lastWebhook = seen;
     return {
-      changed: true,
+      changed,
       settled: false,
-      note: `${verified}: ${fmt(amount)} refunded on capture ${captureId ?? order.captureId}`,
-      audit: { actor: "system", message: `Order ${order.id}: ${fmt(amount)} refunded on PayPal${SOURCE_SUFFIX.webhook}.`, ref: { orderId: order.id }, amountCents: amount },
+      note: changed
+        ? `${verified}: ${fmt(amount)} refunded on capture ${captureId ?? order.captureId}`
+        : `${verified}: confirms refund ${str(r.id)} (${fmt(amount)}), already in the ledger`,
+      audit: changed
+        ? { actor: "system", message: `Order ${order.id}: ${fmt(amount)} refunded on PayPal${SOURCE_SUFFIX.webhook}.`, ref: { orderId: order.id }, amountCents: amount }
+        : undefined,
     };
   }
 
