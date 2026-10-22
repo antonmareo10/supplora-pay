@@ -2,13 +2,15 @@
 
 > **The only invoice an agent should pay is one that matches what actually arrived at the kitchen door, at the price you agreed.**
 >
-> Supplora Pay does a **three-way match** on every supplier invoice: the invoice (read by Claude) ↔ the **signed delivery note** (*albarán*) ↔ the restaurant's **price history**. Every euro is checked in integer cents by deterministic rules. It then plans the week's payments within a cash cap and pays suppliers through **PayPal Payouts** once the owner approves. A purchasing agent restocks low stock through **PayPal Orders v2** checkouts and verifies them with the official **PayPal Agent Toolkit**. It can never pay: the owner's approval only **authorizes** the order, and PayPal **captures only what the signed delivery note confirms**. Payment statuses come back through **verified PayPal webhooks**, and text on an invoice that tries to instruct the AI is held, never followed.
+> Supplora Pay does a **three-way match** on every supplier invoice: the invoice (read by Claude) ↔ the **signed delivery note** (*albarán*) ↔ the restaurant's **price history**. Every euro is checked in integer cents by deterministic rules. It then plans the week's payments within a cash cap and pays suppliers through **PayPal Payouts** once the owner approves. A purchasing agent restocks low stock at the suppliers' online stores, which speak **PayPal's Cart API** for agents: the store prices the cart and creates the **PayPal Orders v2** order, and the agent verifies it with the official **PayPal Agent Toolkit**. It can never pay: the owner's approval only **authorizes** the order, and PayPal **captures only what the signed delivery note confirms**. Payment statuses come back through **verified PayPal webhooks**, and text on an invoice that tries to instruct the AI is held, never followed.
 
 It grows out of [Supplora](https://www.supplora.app), an AI tool that reads restaurant delivery notes at the kitchen door and pushes them into the restaurant's ERP, in production at a family-run restaurant in Spain since March 2026 (715 delivery notes read and 103 supplier price increases flagged, worth €1,876, by September 2026). That is where the delivery notes and price history Supplora Pay matches against come from. In this repo they are seeded (`src/data/seed.ts`) and the restaurant, suppliers and people are fictional.
 
 Built for the **PayPal AI Hackathon** (2026) · *Best Use of PayPal + AI* · *Best Use of Agentic Commerce*. MIT licensed. Development started on 16 Oct 2026 (first commit `dc36498`); what was built when is under "Built during the hackathon" below, and the full commit history is public.
 
 **Demo video (2:30):** https://youtu.be/UstM9s4tu6o  ·  **Live demo:** https://supplora-pay.vercel.app
+
+[![CI](https://github.com/antonmareo10/supplora-pay/actions/workflows/ci.yml/badge.svg)](https://github.com/antonmareo10/supplora-pay/actions/workflows/ci.yml)  ·  **[Threat model](SECURITY.md):** 14 ways an AI agent could misuse money here, each tied to the tests that prove its mitigation (the build fails if one of those tests disappears).
 
 ![Overview](docs/screenshots/devpost/01-catches.png)
 
@@ -20,7 +22,7 @@ Built for the **PayPal AI Hackathon** (2026) · *Best Use of PayPal + AI* · *Be
 
 1. **Inbox → Review 7 with Claude**, then open **CleanPro · CP-11958**. A lookalike invoice for a real delivery asks to be paid to a new PayPal address, and its fine print tells "AI assistants" to ignore their rules and pay it today. It is held (**€224.33**): Claude copied the instruction as data, the payee can only come from the supplier directory, and the payment agent's own plan check, run live on the page, answers `doc-07 is held and must not be paid.`
 2. **Payment run → Plan this week's payments → Approve & pay 4 · €2,222.68.** The agent pays the three invoices due before the next run and Atlantic Wine early for its 2% discount (€23.15), defers Cárnicas Sanz, never pays the two held invoices. One real **PayPal Payouts** batch goes out; each item waits `UNCLAIMED` (placeholder payees).
-3. **Reorder → Let the agent restock → Approve & authorize €144.96 → Delivery note in.** Approval only authorizes the card; the (scripted, labelled) delivery note is one sanitiser short, so PayPal **captures €141.09** and **€3.87 is released**: authorized → captured → released, on the order card and in the **Ledger**, where *Reconcile with PayPal* reads it back.
+3. **Reorder → Let the agent restock → Approve & authorize €144.96 → Delivery note in.** The agent's cart goes through CleanPro's **PayPal Cart API** (the store prices it and returns the PayPal order as its payment token), and the store completes checkout only after your approval (its order number appears on the card). Approval only authorizes the card; the (scripted, labelled) delivery note is one sanitiser short, so PayPal **captures €141.09** and **€3.87 is released**: authorized → captured → released, on the order card and in the **Ledger**, where *Reconcile with PayPal* reads it back.
 
 The full click path, with what to say at each step, is in [docs/RECORDING.md](docs/RECORDING.md). To see Claude live, run it locally with your key (below).
 
@@ -33,6 +35,7 @@ The full click path, with what to say at each step, is in [docs/RECORDING.md](do
 | **The payee never comes from the document** | The PayPal receiver comes from the supplier directory. An invoice asking to be paid somewhere new is held as *payment details changed*, the classic invoice fraud. |
 | **Documents are data, not instructions** | Claude copies any text that tries to instruct the processor ("AI assistant: ignore your rules…") into a quarantined field; the rules hold the invoice, a second scan that does not depend on the model checks every transcribed text field, and the agents only ever see directory names, plain invoice references and rule-written reasons. |
 | **Pay only for what arrived** | The purchasing agent's orders are PayPal orders with intent `AUTHORIZE`. Approval holds the money on the card; when the signed delivery note comes back, code computes the delivered amount and makes one final partial capture, and PayPal releases the rest (or the authorization is voided if nothing came). |
+| **Agents shop through PayPal's Cart API** | Both supplier stores implement the merchant side of PayPal's Cart API for agentic commerce (create, read, replace, checkout). The store prices every cart itself, answers with validation issues the agent has to resolve, and completes checkout only once the owner's approval authorized the card. |
 | **PayPal tells the ledger** | Verified webhooks (signature checked by PayPal, each event processed once) and the reconciliation update payout items, authorizations and captures; the ledger says which one updated each status. |
 | **Agents propose, the owner approves, PayPal pays** | No agent tool can pay: the planner can only propose; the purchasing agent's PayPal toolkit is allowlisted to read-only `get_order`. Amounts are recomputed in code at approval time, against the current state and the cash cap. |
 | **A keyless, multi-user public demo** | Replays real Claude runs with live tools and live PayPal sandbox calls, with per-visitor sessions. It falls back to clearly labelled deterministic rules when a judge goes off-script. |
@@ -66,7 +69,8 @@ All PayPal calls are server-side and sandbox-only: the app refuses any non-sandb
 | Need | PayPal product | Calls | How |
 |---|---|---|---|
 | Pay suppliers in one batch after approval | **Payouts** | `POST /v1/payments/payouts`, `GET /v1/payments/payouts/{id}` (polled until final) | REST (`src/lib/paypal.ts`): the toolkit has no Payouts tool |
-| Agent checkout at a supplier's store | **Orders v2** | `POST /v2/checkout/orders` (intent `AUTHORIZE` for the agent, `CAPTURE` for the owner's own store purchase; items, VAT breakdown, EUR) | REST: the toolkit's `create_order` (1.11.0) only accepts USD |
+| Agents shop at a supplier's store | **PayPal Cart API** (agentic commerce, merchant side) | `POST /merchant-cart`, `GET` and `PUT /merchant-cart/{id}`, `POST /merchant-cart/{id}/checkout` | The stores' own endpoints (`src/app/api/paypal/v1/stores/[supplier]/merchant-cart`, `src/lib/cart-api.ts`, `src/lib/store-carts.ts`): the store validates and prices the cart, a valid cart gets its PayPal order as `payment_method.token`, checkout completes after the owner's approval |
+| The cart's payment token, and the owner's own store purchase | **Orders v2** | `POST /v2/checkout/orders` (intent `AUTHORIZE` for agent carts, `CAPTURE` for the owner's own store purchase; items, VAT breakdown, EUR) | REST: the toolkit's `create_order` (1.11.0) only accepts USD |
 | The agent verifies its checkout; the approval re-checks it; the ledger reconciles it | **Orders v2 via the PayPal Agent Toolkit** | `get_order` (status, authorization and captures) | **`@paypal/agent-toolkit` MCP server** |
 | Owner approval: hold the money on the card on file | **Vault v3 + Orders v2** | `POST /v3/vault/setup-tokens` → `POST /v3/vault/payment-tokens` (once); `confirm-payment-source` → `POST /v2/checkout/orders/{id}/authorize` | REST, only on the owner's approval (the owner's own store purchase captures at once instead) |
 | **Pay only for what arrived** | **Payments v2** | `POST /v2/payments/authorizations/{id}/capture` with the delivered amount and `final_capture: true` (PayPal releases the rest), idempotency key `settle-{authorization id}`; `POST /v2/payments/authorizations/{id}/void` when nothing arrived | REST, when the signed delivery note is recorded; amounts from the order's own line prices (`src/lib/settlement.ts`) |
@@ -85,6 +89,26 @@ Restaurants pay for deliveries that come short all the time; Supplora already re
 4. The ledger shows **authorized €144.96 → captured €141.09 → €3.87 released**, and *Reconcile with PayPal* reads the authorization and the capture back from PayPal. If nothing arrived, the authorization is voided and all of it is released.
 
 ![Pay only for what arrived](docs/screenshots/devpost/more/pay-for-what-arrived.png)
+
+### PayPal Cart API: the supplier stores speak it
+
+PayPal's Cart API is the contract a merchant exposes so that AI agents can shop: create a cart, read it, replace it, complete checkout. Both supplier stores in the demo implement the merchant side, and the purchasing agent's `create_checkout` goes through it:
+
+1. The agent sends SKUs and quantities (and the catalog price it read) to `POST /merchant-cart`.
+2. The store prices the cart from its own catalog and validates it. Problems come back as `validation_issues` the agent has to resolve, for example `PRICING_ERROR` with the resolution `ACCEPT_NEW_PRICE`, or `INVENTORY_ISSUE` with `MODIFY_CART`. An invalid cart gets no PayPal order.
+3. A valid cart gets its PayPal order (Orders v2, intent `AUTHORIZE`) as `payment_method.token`. Calling `create_checkout` again for the same store replaces the cart (`PUT`): an unchanged charge keeps its order, a changed one gets a new order, which the agent has to verify again.
+4. `POST /merchant-cart/{id}/checkout` completes the cart only when PayPal shows the payment authorized. Only the owner's approval authorizes it, so an agent that tries first gets a 422 with a `PAYMENT_ERROR` whose resolution is `REQUEST_APPROVAL`. After the approval the store completes checkout, and the order card shows the supplier's order number.
+
+Try it against the hosted demo (sandbox; without a session cookie the calls share the demo's scratch session):
+
+```bash
+curl -s -X POST https://supplora-pay.vercel.app/api/paypal/v1/stores/cleanpro/merchant-cart \
+  -H 'content-type: application/json' \
+  -d '{"items":[{"variant_id":"CP-RA-10","quantity":1,"price":{"currency_code":"EUR","value":"20.00"}}]}'
+# 200, status INCOMPLETE: PRICING_ERROR (the store's price is 24.90), resolution ACCEPT_NEW_PRICE, no PayPal order
+```
+
+Field names follow PayPal's published schema as WooCommerce's open-source Store Sync module mirrors it. In production a store would also verify PayPal's signed JWT on every call; here the endpoints are open, sandbox only, and covered by the demo's write caps.
 
 ### Verified webhooks
 
@@ -168,13 +192,13 @@ The dashboard uses AG Grid and AG Charts Community only; AG Studio was not used 
 
 | Criterion | Where to look |
 |---|---|
-| **Technical implementation** | Integer-cent rules engine with tests (`checks.ts`), Claude tool-runner agents with validation tools, PayPal Payouts / Orders v2 / Vault v3 / Payments v2 (authorize, partial final capture, void) over REST with idempotency + audit, verified webhooks with dedupe and out-of-order protection, the PayPal Agent Toolkit as an in-process MCP server behind a tested allowlist, reconciliation, per-session demo state, record/replay of real agent runs. |
+| **Technical implementation** | Integer-cent rules engine with tests (`checks.ts`), Claude tool-runner agents with validation tools, PayPal Payouts / Orders v2 / Vault v3 / Payments v2 (authorize, partial final capture, void) over REST with idempotency + audit, verified webhooks with dedupe and out-of-order protection, the PayPal Agent Toolkit as an in-process MCP server behind a tested allowlist, the supplier stores' PayPal Cart API (merchant side), reconciliation, per-session demo state, record/replay of real agent runs. 80 tests and CI on every push; a [threat model](SECURITY.md) whose every mitigation is tied to a test. |
 | **Design** | One coherent UI from inbox to ledger, an agent timeline that shows every tool call, a plan-vs-cash-cap view, and the AG Grid + AG Charts ledger. |
 | **Impact** | Overcharges, short deliveries and duplicates are caught *before* paying; discounts are captured. It is built on a product in production at a real restaurant: 715 delivery notes read and €1,876 of price increases flagged (Mar–Sep 2026). |
 | **Innovation** | Three-way match + agentic payments with a hard human-approval boundary. Restock orders are paid only for what the signed delivery note confirms (authorize → partial capture → release). Payees never come from documents, and a prompt injection inside an invoice is held, not followed. A keyless public demo that replays real Claude runs against live tools. |
 | **Presentation** | The hosted demo, [docs/RECORDING.md](docs/RECORDING.md), Devpost screenshots in `docs/screenshots/devpost/` with [captions](docs/screenshots/devpost/CAPTIONS.md). |
 | **Best Use of PayPal + AI** | Claude reads, checks and plans; PayPal Payouts pays only what the rules and the owner approve. |
-| **Best Use of Agentic Commerce** | The purchasing agent shops supplier stores with PayPal Orders v2 checkouts and verifies them with the PayPal Agent Toolkit, within a limit, and cannot pay; the owner's approval authorizes, and PayPal captures only what arrived. |
+| **Best Use of Agentic Commerce** | The purchasing agent shops the suppliers' stores through PayPal's Cart API (the store prices and validates every cart; checkout completes only after the owner's approval), verifies each PayPal order with the PayPal Agent Toolkit, stays within a limit, and cannot pay; the owner's approval authorizes, and PayPal captures only what arrived. |
 
 ## Architecture
 
@@ -188,9 +212,10 @@ Route handlers (/app/api/*) ── same-origin check, input validation ───
   ├─ review       → Claude vision (messages.parse + Zod) | demo: recorded reading → rules (checks.ts)
   ├─ payment-run  → Claude tool runner | demo: replay → tools → plan "awaiting approval"
   ├─ plans/approve (owner) → PayPal Payouts POST → poll GET → invoices paid
-  ├─ restock      → Claude tool runner → create_checkout (REST Orders v2, EUR)
+  ├─ restock      → Claude tool runner → create_checkout → the store's PayPal Cart API (POST/PUT /merchant-cart → REST Orders v2, EUR)
   │                                    → get_order (PayPal Agent Toolkit, MCP, allowlisted)
-  ├─ restock/[id] approve (owner) → toolkit get_order re-check → Vault token → confirm → authorize
+  ├─ restock/[id] approve (owner) → toolkit get_order re-check → Vault token → confirm → authorize → Cart API checkout
+  ├─ paypal/v1/stores/[supplier]/merchant-cart → the stores' PayPal Cart API, for any agent (checkout needs the owner's approval)
   ├─ orders/[id]/delivery (signed delivery note) → final partial capture of what arrived | void
   ├─ paypal/webhook (from PayPal) → verify-webhook-signature → dedupe → session ledger update
   ├─ reconcile    → toolkit get_order + list_transactions, REST Payouts GET (statuses taken over, amounts reported)
@@ -250,15 +275,18 @@ From the commit history (first commit `dc36498`, 16 Oct 2026). Supplora, the del
 | 17 Oct 2026 | Money guarantees: restock limit backstop, stuck-payment recovery, partial-pay guard |
 | 20 Oct 2026 | AG Grid + AG Charts ledger; the PayPal Agent Toolkit as an in-process MCP server; the keyless public demo (recorded Claude runs, per-visitor sessions); docs |
 | 21 Oct 2026 | Honest payout states, demo fund sweep and write caps; hosted demo on Vercel; **pay only for what arrived** (authorize → partial capture → release), **verified PayPal webhooks**, the **prompt-injection** invoice and its guardrails |
+| 22 Oct 2026 | The supplier stores' **PayPal Cart API** (merchant side) and the purchasing agent shopping through it; CI; the [threat model](SECURITY.md) tied to tests |
 
 ## Quality checks
 
 ```bash
-npm test          # 56 tests, no network: rules engine on the seven samples (incl. the prompt injection and false-positive checks), edge cases and money helpers (13), partial-pay guard and ledger stats (7), the payment agent's plan check (5), pay-for-what-arrived settlement (7), webhook headers, verification body, routing and forward-only status updates (8), PayPal Agent Toolkit allowlist against the real package (5), demo payout sweep (7) and write caps (4)
+npm test          # 80 tests, no network: rules engine on the seven samples (incl. the prompt injection and false-positive checks), edge cases and money helpers (13), partial-pay guard and ledger stats (7), the payment agent's plan check (5), pay-for-what-arrived settlement (7), webhook headers, verification body, routing and forward-only status updates (8), PayPal Agent Toolkit allowlist against the real package (5), demo payout sweep (7), write caps (4), reconciliation view (4), request guards (4), sandbox-only PayPal host (2), the order check before approval (3), the checkout race (3), the stores' Cart API (6) and the threat model (2)
 npm run typecheck # next typegen + tsc
 npm run lint
 npm run build
 ```
+
+CI (`.github/workflows/ci.yml`) runs lint, typecheck, the tests and the production build on every push, without any secrets.
 
 ## Project structure
 
@@ -270,7 +298,10 @@ src/proxy.ts             demo mode: per-visitor session cookie
 src/lib/checks.ts        deterministic review rules (+ checks.test.ts)
 src/lib/review.ts        Claude vision extraction (live / recorded)
 src/lib/planner.ts       payment-run agent
-src/lib/restock.ts       purchasing agent + Orders v2 checkout + toolkit verification
+src/lib/restock.ts       purchasing agent: carts through the stores' Cart API, toolkit verification, approval, settlement
+src/lib/cart-api.ts      PayPal Cart API, merchant side: pricing, validation issues, totals, checkout decision (+ tests)
+src/lib/store-carts.ts   the stores' carts: PayPal order as payment token, replace, checkout after approval
+src/lib/http-guards.ts   same-origin check, body and amount parsing (+ tests); order-checks.ts: PayPal order vs checkout (+ tests)
 src/lib/paypal.ts        PayPal REST client (OAuth cache, idempotency, audit, demo write limits)
 src/lib/settlement.ts    pay only for what arrived: delivered amount, capture or void (+ tests)
 src/lib/webhooks.ts      verified webhooks; webhook-events.ts: status updates shared by poll, webhook, reconcile (+ tests)
@@ -284,6 +315,7 @@ src/data/seed.ts         supplier directory, price history, delivery notes, stor
 src/data/recorded/       real Claude outputs replayed by the public demo
 scripts/                 generate-samples.mjs (invoice images), register-webhook.mjs (PayPal webhook id)
 docs/                    DEPLOY.md, RECORDING.md, screenshots
+SECURITY.md              threat model: each threat, its mitigation and the tests that prove it
 ```
 
 ## Limitations
@@ -294,6 +326,7 @@ docs/                    DEPLOY.md, RECORDING.md, screenshots
 - Transaction Search needs the PayPal app's *Transaction search* permission; without it, reconciliation checks each order and payout one by one.
 - In the public demo the delivery note that settles a restock order is scripted (and labelled); in production it is the note Supplora captures at the kitchen door.
 - Webhooks need a public URL and `PAYPAL_WEBHOOK_ID`; until then the endpoint answers 503 and statuses come from polling and reconciliation.
+- The stores' Cart API endpoints have no authentication in the demo (sandbox only, write caps); a real store would verify PayPal's signed JWT.
 
 ## Who built it
 

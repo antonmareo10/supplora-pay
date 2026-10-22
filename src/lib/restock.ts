@@ -11,6 +11,7 @@ import { RESTAURANT, STORE_PRODUCTS, supplierById } from "@/data/seed";
 import { callTool, replayRun, runLive } from "./agent-run";
 import { lowStock } from "./ap";
 import { anthropic, claudeErrorMessage, claudeMode, MODEL } from "./claude";
+import { cartTotals as storeCartTotals, parseCartRequest, priceStoreCart } from "./cart-api";
 import { fmt, fromDecimalString, pctOf, toDecimalString } from "./money";
 import { fmtDay } from "./dates";
 import {
@@ -26,11 +27,14 @@ import {
   PayPalError,
   voidAuthorization,
 } from "./paypal";
+import { checkOrderMatches } from "./order-checks";
+import { serializer } from "./serialize";
 import { openToolkit, orderFacts, withToolkit, type ToolkitConnection, type ToolkitResult } from "./paypal-toolkit";
 import { RESTOCK_AGENT_TOOLKIT_TOOLS } from "./paypal-toolkit-policy";
 import { fingerprint, recordedRun, recordMode, type RecordedCall } from "./recordings";
 import { nothingDelivered, orderApproved, planSettlement, scriptedDelivery, SettlementError, type SettlementPlan } from "./settlement";
 import { auditEntry, indexPayPalResources, newId, readState, updateState } from "./state";
+import { checkoutCart, createCart, replaceCart } from "./store-carts";
 import type { AgentEvent, AppState, CartLine, StoreOrder } from "./types";
 
 type Emit = (e: AgentEvent) => void;
@@ -50,7 +54,16 @@ export function storeCatalog(supplierId: string) {
   const supplier = supplierById(supplierId);
   if (!supplier?.store) return null;
   return {
-    store: { id: supplier.id, name: supplier.name, tagline: supplier.store.tagline, delivery: supplier.store.leadTime, currency: "EUR", prices: "excl. VAT" },
+    store: {
+      id: supplier.id,
+      name: supplier.name,
+      tagline: supplier.store.tagline,
+      delivery: supplier.store.leadTime,
+      currency: "EUR",
+      prices: "excl. VAT",
+      // Agents buy through the store's PayPal Cart API (agentic commerce, v1).
+      cart_api: `/api/paypal/v1/stores/${supplier.id}/merchant-cart`,
+    },
     products: STORE_PRODUCTS.filter((p) => p.supplierId === supplierId).map((p) => ({
       sku: p.sku,
       name: p.name,
@@ -62,33 +75,18 @@ export function storeCatalog(supplierId: string) {
   };
 }
 
-/** Builds priced cart lines from SKUs and quantities; prices always come from the catalog, never from the model. */
+/** Builds priced cart lines from SKUs and quantities with the store's own pricing (cart-api.ts); prices always come from the catalog, never from the model. */
 export function priceCart(supplierId: string, items: { sku: string; qty: number; reason?: string }[]): CartLine[] {
   const supplier = supplierById(supplierId);
   if (!supplier?.store) throw new CommerceError(`${supplier?.name ?? supplierId} has no online store.`, 400);
-  if (!items.length) throw new CommerceError("The cart is empty.", 400);
-  if (items.length > 20) throw new CommerceError("Too many different products in one order.", 400);
-  const seen = new Set<string>();
-  return items.map((i) => {
-    const p = STORE_PRODUCTS.find((x) => x.sku === i.sku && x.supplierId === supplierId);
-    if (!p) throw new CommerceError(`SKU ${i.sku} is not sold by ${supplier.name}.`, 400);
-    if (seen.has(p.sku)) throw new CommerceError(`SKU ${p.sku} appears twice.`, 400);
-    seen.add(p.sku);
-    if (!Number.isInteger(i.qty) || i.qty < 1 || i.qty > 50) throw new CommerceError(`Quantity for ${p.sku} must be a whole number from 1 to 50.`, 400);
-    if (i.qty > p.inStock) throw new CommerceError(`${supplier.name} only has ${p.inStock} of ${p.sku} in stock.`, 400);
-    const unitVatCents = pctOf(p.unitPriceCents, p.vatRate);
-    return {
-      sku: p.sku,
-      name: `${p.name} (${p.pack})`,
-      qty: i.qty,
-      unitPriceCents: p.unitPriceCents,
-      vatRate: p.vatRate,
-      unitVatCents,
-      netCents: p.unitPriceCents * i.qty,
-      vatCents: unitVatCents * i.qty,
-      reason: i.reason?.slice(0, 200),
-    };
-  });
+  const { lines, issues } = priceStoreCart(
+    supplier,
+    STORE_PRODUCTS,
+    items.map((i, index) => ({ index, variant_id: i.sku, quantity: i.qty, price: undefined })),
+  );
+  if (issues.length) throw new CommerceError(issues.map((i) => i.user_message ?? i.message).join(" "), 400);
+  const reasons = new Map(items.map((i) => [i.sku, i.reason?.slice(0, 200)]));
+  return lines.map((l) => ({ ...l, reason: reasons.get(l.sku) }));
 }
 
 const SYSTEM = `You are the purchasing agent for ${RESTAURANT.name}, a restaurant in Málaga. You restock items that are below their par level by buying from the suppliers' online trade stores, within the spending limit (VAT included) the owner set for this run. You can create PayPal checkouts at the stores, but you cannot pay: the owner approves each order, and only then is it paid with the restaurant's card on file.
@@ -97,7 +95,7 @@ How to work:
 1. Call check_inventory.
 2. Call browse_store for each supplier with low-stock items (in parallel).
 3. Decide quantities. Bring items back to par. When the limit does not cover everything, prioritise kitchen hygiene and food-safety essentials and items at zero stock, then bar items. Buying less than par is fine. Never exceed the limit.
-4. Call create_checkout once per supplier. If it returns an error, fix the cart and call it again.
+4. Call create_checkout once per supplier: it builds the cart at the store through the store's PayPal Cart API. If it returns an error or validation issues, fix the cart and call it again.
 5. Verify each checkout on PayPal with get_order (PayPal Agent Toolkit): it must be CREATED, in EUR, for the total create_checkout returned. submit_for_approval refuses unverified checkouts.
 6. Call submit_for_approval once, with a short summary for the owner. Any euro figure in it must come from the tool results (do not estimate totals you did not get from a tool).
 
@@ -110,18 +108,6 @@ export function restockFingerprint(state: AppState): string {
     low: lowStock(state).map((i) => [i.key, i.onHand, i.par, i.sku]),
     products: STORE_PRODUCTS.map((p) => [p.sku, p.unitPriceCents, p.vatRate, p.inStock]),
   });
-}
-
-/** Does a get_order result (PayPal Agent Toolkit) match the checkout the agent created? */
-export function checkOrderMatches(order: StoreOrder, r: ToolkitResult): { ok: boolean; reason: string } {
-  if (!r.ok) return { ok: false, reason: `PayPal Agent Toolkit get_order failed: ${r.error}` };
-  const f = orderFacts(r.data);
-  if (f.id !== order.id) return { ok: false, reason: `PayPal returned order ${f.id}, expected ${order.id}` };
-  if (f.currency !== "EUR" || f.amountCents !== order.totalCents) {
-    return { ok: false, reason: `PayPal shows ${f.currency} ${f.amountCents != null ? (f.amountCents / 100).toFixed(2) : "?"} for ${order.id}, but the checkout is ${fmt(order.totalCents)}` };
-  }
-  if (!["CREATED", "APPROVED"].includes(f.status)) return { ok: false, reason: `Order ${order.id} is ${f.status} on PayPal, expected CREATED` };
-  return { ok: true, reason: `${order.id} is ${f.status} on PayPal for ${fmt(order.totalCents)}` };
 }
 
 export async function runRestockAgent(emit: Emit, signal?: AbortSignal): Promise<string | null> {
@@ -144,15 +130,7 @@ export async function runRestockAgent(emit: Emit, signal?: AbortSignal): Promise
   // create_checkout calls emitted in one assistant turn run concurrently (the tool runner awaits
   // them with Promise.all). Serialize them so each sees the running total the previous committed;
   // otherwise two carts can each read an empty total and both slip past the limit check.
-  let checkoutLock: Promise<unknown> = Promise.resolve();
-  const serialize = <T>(fn: () => Promise<T>): Promise<T> => {
-    const next = checkoutLock.then(fn, fn);
-    checkoutLock = next.then(
-      () => undefined,
-      () => undefined,
-    );
-    return next;
-  };
+  const serialize = serializer();
 
   const wrap = <T extends z.ZodType>(def: {
     name: string;
@@ -221,55 +199,97 @@ export async function runRestockAgent(emit: Emit, signal?: AbortSignal): Promise
   const createCheckout = wrap({
     name: "create_checkout",
     description:
-      "Create a PayPal checkout (order) at one supplier's store. Prices come from the store. Fails if the running total of all checkouts (VAT incl.) would exceed the owner's limit. Calling it again for the same supplier replaces that supplier's checkout.",
+      "Create a cart at one supplier's store through its PayPal Cart API (POST /merchant-cart). The store prices it (prices come from the store) and returns a PayPal order as the cart's payment token. Fails if the running total of all checkouts (VAT incl.) would exceed the owner's limit. Calling it again for the same supplier replaces that supplier's cart (PUT /merchant-cart/{id}).",
     inputSchema: z.object({
       supplier_id: z.string(),
       items: z.array(z.object({ sku: z.string(), qty: z.number(), reason: z.string().describe("Why, e.g. on hand 1, par 4") })),
     }),
     label: ({ supplier_id, items }) => `Creating a checkout at ${supplierById(supplier_id)?.name ?? supplier_id} (${items.length} items)`,
-    run: ({ supplier_id, items }) => serialize(async () => {
-      const lines = priceCart(supplier_id, items);
-      const totals = cartTotals(lines);
-      const others = spent() - (checkouts.get(supplier_id)?.totalCents ?? 0);
-      if (others + totals.totalCents > limitCents) {
-        return {
-          summary: `Over the limit by ${fmt(others + totals.totalCents - limitCents)}`,
-          result: {
-            ok: false,
-            error: `This cart costs ${fmt(totals.totalCents)} incl. VAT; with other checkouts (${fmt(others)}) that exceeds the ${fmt(limitCents)} limit by ${fmt(others + totals.totalCents - limitCents)}. Reduce quantities or drop items.`,
-          },
-          error: true,
+    run: ({ supplier_id, items }) =>
+      serialize(async () => {
+        const supplier = supplierById(supplier_id);
+        if (!supplier?.store) throw new CommerceError(`${supplier?.name ?? supplier_id} has no online store.`, 400);
+        // The Cart API request: SKUs, quantities and the catalog price the agent read (the store re-prices it anyway).
+        const body = {
+          items: items.map((i) => {
+            const p = STORE_PRODUCTS.find((x) => x.sku === i.sku && x.supplierId === supplier_id);
+            return { variant_id: i.sku, quantity: i.qty, ...(p ? { price: { currency_code: "EUR", value: toDecimalString(p.unitPriceCents) } } : {}) };
+          }),
+          payment_method: { type: "paypal" },
         };
-      }
-      const supplier = supplierById(supplier_id)!;
-      const localId = newId("ord");
-      // Intent AUTHORIZE: approval only holds the money; the delivery note decides what is captured.
-      const order = await createOrder({ localId, storeName: supplier.name, lines, ref: { proposalId }, source: "agent", intent: "AUTHORIZE" });
-      await indexPayPalResources([order.id]);
-      const record: StoreOrder = {
-        id: order.id,
-        supplierId: supplier_id,
-        createdAt: new Date().toISOString(),
-        source: "agent",
-        proposalId,
-        lines,
-        ...totals,
-        intent: "AUTHORIZE",
-        status: order.status,
-      };
-      checkouts.set(supplier_id, record);
-      orderSuppliers[order.id] = supplier_id;
-      return {
-        summary: `PayPal order ${order.id} · ${order.status} · ${fmt(totals.totalCents)}`,
-        result: {
-          ok: true,
-          paypal_order_id: order.id,
-          status: order.status,
-          total_incl_vat_eur: eur(totals.totalCents),
-          remaining_limit_eur: eur(limitCents - spent()),
-        },
-      };
-    }),
+        // The agent's own budget check comes first, on the store's prices: nothing is created at the store if it fails.
+        const quote = priceStoreCart(supplier, STORE_PRODUCTS, parseCartRequest(body));
+        if (quote.issues.length) {
+          return {
+            summary: `The store's Cart API returned ${quote.issues.length} validation issue${quote.issues.length === 1 ? "" : "s"}`,
+            result: {
+              ok: false,
+              error: "The store did not accept this cart. Resolve the validation issues and call create_checkout again.",
+              validation_issues: quote.issues.map((i) => ({ code: i.code, message: i.user_message ?? i.message, field: i.field, resolution: i.resolution_options?.map((r) => r.action) })),
+            },
+            error: true,
+          };
+        }
+        const totals = storeCartTotals(quote.lines);
+        const previous = checkouts.get(supplier_id);
+        const others = spent() - (previous?.totalCents ?? 0);
+        if (others + totals.totalCents > limitCents) {
+          return {
+            summary: `Over the limit by ${fmt(others + totals.totalCents - limitCents)}`,
+            result: {
+              ok: false,
+              error: `This cart costs ${fmt(totals.totalCents)} incl. VAT; with other checkouts (${fmt(others)}) that exceeds the ${fmt(limitCents)} limit by ${fmt(others + totals.totalCents - limitCents)}. Reduce quantities or drop items.`,
+            },
+            error: true,
+          };
+        }
+        // The store's Cart API: create the cart, or replace this supplier's cart from earlier in the run.
+        const ref = { proposalId };
+        const { cart, order } = previous?.cart
+          ? await replaceCart(supplier_id, previous.cart.id, body, { ref })
+          : await createCart(supplier_id, body, { source: "agent", ref });
+        if (cart.validationStatus !== "VALID" || !cart.paymentToken) {
+          return {
+            summary: `Cart API: cart ${cart.id} ${cart.validationStatus}`,
+            result: {
+              ok: false,
+              error: "The store did not accept this cart.",
+              validation_issues: cart.issues.map((i) => ({ code: i.code, message: i.user_message ?? i.message, field: i.field })),
+            },
+            error: true,
+          };
+        }
+        const reasons = new Map(items.map((i) => [i.sku, i.reason?.slice(0, 200)]));
+        const lines = cart.lines.map((l) => ({ ...l, reason: reasons.get(l.sku) }));
+        const record: StoreOrder = {
+          id: cart.paymentToken,
+          supplierId: supplier_id,
+          createdAt: new Date().toISOString(),
+          source: "agent",
+          proposalId,
+          lines,
+          ...storeCartTotals(lines),
+          // Intent AUTHORIZE: approval only holds the money; the delivery note decides what is captured.
+          intent: "AUTHORIZE",
+          status: order?.status ?? previous?.status ?? "CREATED",
+          cart: { id: cart.id, status: cart.status },
+        };
+        checkouts.set(supplier_id, record);
+        orderSuppliers[record.id] = supplier_id;
+        return {
+          summary: `Cart API cart ${cart.id} ${cart.validationStatus} · PayPal order ${record.id} · ${record.status} · ${fmt(record.totalCents)}`,
+          result: {
+            ok: true,
+            cart_id: cart.id,
+            cart_status: cart.status,
+            validation_status: cart.validationStatus,
+            paypal_order_id: record.id,
+            status: record.status,
+            total_incl_vat_eur: eur(record.totalCents),
+            remaining_limit_eur: eur(limitCents - spent()),
+          },
+        };
+      }),
   });
 
   const submit = wrap({
@@ -489,10 +509,22 @@ async function payOrder(order: StoreOrder, ref: { proposalId?: string; orderId: 
       await indexPayPalResources([a.id]);
       const amountCents = a.amount?.value ? fromDecimalString(a.amount.value) : order.totalCents;
       const at = new Date().toISOString();
+      // The card is authorized: the supplier store can now complete its Cart API checkout (the order is
+      // confirmed to the supplier; the money stays held until the delivery note).
+      let cart = order.cart;
+      if (cart && cart.status !== "COMPLETED") {
+        try {
+          const done = await checkoutCart(order.supplierId, cart.id, { known: { orderStatus: authorized.status, authorizationStatus: a.status }, ref });
+          cart = { id: done.id, status: done.status, merchantOrderNumber: done.merchantOrderNumber };
+        } catch (err) {
+          cart = { ...cart, error: `Cart API checkout did not complete: ${err instanceof Error ? err.message : String(err)}` };
+        }
+      }
       return {
         ...order,
         status: authorized.status,
         authorization: { id: a.id, status: a.status, amountCents, expiresAt: a.expiration_time, createdAt: at },
+        cart,
         cardLabel: card.label,
         error: amountCents === order.totalCents ? undefined : `PayPal authorized ${fmt(amountCents)}, not ${fmt(order.totalCents)}.`,
         updatedBy: { source: "app", at },

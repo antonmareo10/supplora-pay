@@ -118,7 +118,9 @@ export default async function ReorderPage() {
               ))}
             </ul>
             <p className="mt-3 text-xs text-muted">
-              Each store publishes a machine-readable catalog (e.g. <code className="font-mono">/api/store/cleanpro/catalog</code>) that the agent reads.
+              Each store publishes a machine-readable catalog (e.g. <code className="font-mono">/api/store/cleanpro/catalog</code>) that the agent reads, and
+              takes orders through PayPal&rsquo;s Cart API for agents (<code className="font-mono">/api/paypal/v1/stores/cleanpro/merchant-cart</code>): the store
+              prices every cart itself, answers with issues the agent must resolve, and completes checkout only after your approval.
             </p>
           </Card>
         </div>

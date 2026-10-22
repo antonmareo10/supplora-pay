@@ -102,6 +102,18 @@ export function OrderCard({ order, settleEnabled = true }: { order: StoreOrder; 
               </>
             )}
           </p>
+          {order.cart && (
+            <p className="text-xs text-muted">
+              Bought through the store&rsquo;s PayPal Cart API · cart <Mono>{order.cart.id}</Mono> · {order.cart.status}
+              {order.cart.merchantOrderNumber && (
+                <>
+                  {" "}
+                  · supplier order <Mono>{order.cart.merchantOrderNumber}</Mono>
+                </>
+              )}
+            </p>
+          )}
+          {order.cart?.error && <p className="text-xs text-terracotta">{order.cart.error}</p>}
         </div>
         <Pill tone={st.tone}>{st.label}</Pill>
       </header>

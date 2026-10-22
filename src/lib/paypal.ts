@@ -5,13 +5,13 @@
 //    request bodies, tokens and credentials never do.
 
 import { toDecimalString } from "./money";
+import { sandboxBaseUrl } from "./paypal-base";
 import { currentClientIp, currentStateKey, demoMode } from "./session";
 import { audit, readState, updateState } from "./state";
 import type { AuditEntry, CartLine } from "./types";
 import { verificationBody, type WebhookHeaders } from "./webhook-events";
 import { WriteLimiter } from "./write-limits";
 
-const SANDBOX = "https://api-m.sandbox.paypal.com";
 
 export class PayPalError extends Error {
   constructor(
@@ -30,10 +30,8 @@ export function paypalConfigured(): boolean {
 }
 
 function baseUrl(): string {
-  const base = (process.env.PAYPAL_BASE_URL || SANDBOX).replace(/\/+$/, "");
-  if (!/^https:\/\/api(-m)?\.sandbox\.paypal\.com$/.test(base)) {
-    throw new PayPalError("Supplora Pay is a sandbox demo: PAYPAL_BASE_URL must point to api-m.sandbox.paypal.com.", 500);
-  }
+  const base = sandboxBaseUrl(process.env.PAYPAL_BASE_URL);
+  if (!base) throw new PayPalError("Supplora Pay is a sandbox demo: PAYPAL_BASE_URL must point to api-m.sandbox.paypal.com.", 500);
   return base;
 }
 

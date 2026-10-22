@@ -1,5 +1,7 @@
 // Domain model for Supplora Pay. All money is integer cents (see money.ts).
 
+import type { StoreCart } from "./cart-api.ts";
+
 export type SupplierCategory = "produce" | "fish" | "meat" | "dairy" | "drinks" | "cleaning";
 
 export interface Supplier {
@@ -365,6 +367,11 @@ export interface StoreOrder {
   releasedCents?: number;
   /** Refunded on PayPal after capture (reported by a verified webhook or reconciliation). */
   refundedCents?: number;
+  /**
+   * PayPal Cart API: the supplier store's cart behind this order (purchasing-agent orders). The
+   * order id above is the cart's payment token; checkout completes the cart after the owner approves.
+   */
+  cart?: { id: string; status: string; merchantOrderNumber?: string; error?: string };
   cardLabel?: string;
   error?: string;
   received?: boolean;
@@ -473,6 +480,8 @@ export interface AppState {
   batches: PayoutBatchRecord[];
   proposals: RestockProposal[];
   orders: StoreOrder[];
+  /** Carts the supplier stores hold for their PayPal Cart API (missing in sessions created before it). */
+  carts?: StoreCart[];
   inventory: InventoryItem[];
   cardOnFile?: { vaultId: string; brand: string; last4: string; createdAt: string };
   reconciliation?: Reconciliation;

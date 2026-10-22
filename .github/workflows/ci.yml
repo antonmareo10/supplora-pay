@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Lint, typecheck, tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      # Unit tests, no network: the rules engine, the agents' guards, the PayPal toolkit allowlist
+      # (against the real package), settlement, webhooks, the stores' Cart API and the threat model.
+      - run: npm test
+      # No secrets in CI: the build must not need PayPal or Anthropic credentials.
+      - run: npm run build

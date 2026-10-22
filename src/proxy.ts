@@ -30,6 +30,8 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Health checks, PayPal webhooks (server to server) and static files never get a session.
-  matcher: ["/((?!_next/static|_next/image|samples/|icon.svg|favicon.ico|robots.txt|api/health|api/paypal/webhook).*)"],
+  // Health checks, PayPal webhooks (server to server) and static files never get a session. Neither do the
+  // stores' Cart API endpoints: an agent without a cookie works in the demo's shared scratch session, so
+  // its carts are still there on its next call (a browser that has a session keeps using it).
+  matcher: ["/((?!_next/static|_next/image|samples/|icon.svg|favicon.ico|robots.txt|api/health|api/paypal/webhook|api/paypal/v1/).*)"],
 };
