@@ -13,11 +13,11 @@ const PayablesGrid = dynamic(() => import("./PayablesGrid"), {
   loading: () => (
     <div className="space-y-3" aria-busy="true" aria-label="Loading payables grid">
       <div className="flex flex-wrap gap-2">
-        <div className="h-9 flex-1 min-w-[200px] animate-pulse rounded-full bg-paper-2" />
-        <div className="h-9 w-48 animate-pulse rounded-full bg-paper-2" />
-        <div className="h-9 w-32 animate-pulse rounded-full bg-paper-2" />
+        <div className="h-9 flex-1 min-w-[200px] animate-pulse rounded-full bg-paper-2 motion-reduce:animate-none" />
+        <div className="h-9 w-48 animate-pulse rounded-full bg-paper-2 motion-reduce:animate-none" />
+        <div className="h-9 w-32 animate-pulse rounded-full bg-paper-2 motion-reduce:animate-none" />
       </div>
-      <div className="h-[560px] animate-pulse rounded-2xl border border-line bg-paper-2/60" />
+      <div className="h-[560px] animate-pulse rounded-2xl border border-line bg-paper-2/60 motion-reduce:animate-none" />
     </div>
   ),
 });

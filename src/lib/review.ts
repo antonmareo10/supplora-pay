@@ -16,7 +16,7 @@ import { anthropic, claudeErrorMessage, claudeMode, MODEL, usageLabel } from "./
 import { businessToday } from "./dates";
 import { fmt } from "./money";
 import { recordedReview, recordMode, saveRecordedReview, sha256 } from "./recordings";
-import { CACHE_DIR, UPLOAD_DIR, auditEntry, readState, updateState } from "./state";
+import { CACHE_DIR, UPLOAD_DIR, auditEntry, initialState, readState, updateState } from "./state";
 import type { AppState, DocumentRecord, Extraction, PaidInvoice, ReviewRecord } from "./types";
 import { isPaidOrSent } from "./ap";
 
@@ -235,6 +235,41 @@ export function recheckAll(state: AppState): void {
     doc.review = { ...doc.review, ...outcome };
     if (before !== outcome.recommendation && doc.decision?.by === "agent") doc.decision = undefined;
   }
+}
+
+/**
+ * A deterministic preview of reviewing the seven bundled sample documents, built in a throwaway state
+ * without touching the session: Claude's recorded readings (src/data/recorded/reviews.json) run through
+ * the same rules in checks.ts. The overview uses it to land the "protected this week" total on its real
+ * figure before the owner has opened the inbox, instead of a row of zeros. Because every sample is
+ * reviewed and nothing is paid, these numbers are identical to what the session holds once the inbox has
+ * been reviewed, so the figure does not change when the owner actually runs the review. Returns null when
+ * no recorded reading is available (e.g. a changed sample), so the caller falls back to live state.
+ */
+export function previewReviewedState(): AppState | null {
+  const state = initialState();
+  let reviewed = 0;
+  for (const doc of state.documents) {
+    if (doc.origin !== "sample") continue;
+    const rec = recordedReview(doc.fileName);
+    if (!rec) continue;
+    const outcome = check(state, doc, rec.extraction);
+    doc.review = {
+      ...outcome,
+      reviewedAt: rec.recordedAt,
+      model: rec.model,
+      durationMs: rec.durationMs,
+      cached: true,
+      replayed: true,
+      recordedAt: rec.recordedAt,
+      extraction: rec.extraction,
+    };
+    doc.reviewStatus = "reviewed";
+    reviewed++;
+  }
+  if (reviewed === 0) return null;
+  recheckAll(state); // finalise cross-document checks (duplicates in the inbox) consistently
+  return state;
 }
 
 export async function reviewDocument(docId: string): Promise<DocumentRecord> {

@@ -13,7 +13,7 @@ import { errorText, postJson } from "./api";
 
 const ReconcileGrid = dynamic(() => import("./ReconcileGrid"), {
   ssr: false,
-  loading: () => <div className="h-[200px] animate-pulse rounded-2xl border border-line bg-paper-2/60" aria-busy="true" />,
+  loading: () => <div className="h-[200px] animate-pulse rounded-2xl border border-line bg-paper-2/60 motion-reduce:animate-none" aria-busy="true" />,
 });
 
 export function ReconcilePanel({ last, hasPayments }: { last: Reconciliation | null; hasPayments: boolean }) {

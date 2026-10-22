@@ -2,6 +2,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import type { ReactNode } from "react";
 import { ActivityList } from "@/components/Activity";
+import { CountUpMoney } from "@/components/client/CountUp";
 import { IconArrowRight, IconCheck, IconShield } from "@/components/icons";
 import { buttonClass, Card, cx, Money, SectionTitle, SeverityIcon } from "@/components/ui";
 import { RESTAURANT, supplierById } from "@/data/seed";
@@ -9,6 +10,7 @@ import { effective, isPaidOrSent, ledgerStats, lowStock } from "@/lib/ap";
 import { businessToday, fmtDay, fmtDayLong } from "@/lib/dates";
 import { needsDispute } from "@/lib/disputes";
 import { fmt } from "@/lib/money";
+import { previewReviewedState } from "@/lib/review";
 import { readState } from "@/lib/state";
 
 export default async function OverviewPage() {
@@ -16,6 +18,15 @@ export default async function OverviewPage() {
   const state = await readState();
   const today = businessToday();
   const s = ledgerStats(state, today);
+  // Before the owner has opened the inbox, land the hero on the real "protected this week" total by
+  // previewing the deterministic review of the seven sample documents (recorded Claude readings run
+  // through the same rules), instead of a row of zeros. The step tracker and activity below stay on the
+  // live session, so "Review 7 with Claude" is still the owner's next action; once reviewed, the figure
+  // is identical because nothing is paid yet.
+  const previewState = s.reviewed === 0 ? previewReviewedState() : null;
+  const previewing = previewState !== null;
+  const hero = previewing ? ledgerStats(previewState, today) : s;
+  const findingsSource = previewing ? previewState : state;
   const activePlan = [...state.plans].reverse().find((p) => p.status === "awaiting_approval" || p.status === "partially_paid");
   const anyPlan = state.plans.some((p) => p.status !== "superseded");
   const proposed = activePlan?.payments.filter((p) => p.status === "proposed") ?? [];
@@ -29,7 +40,7 @@ export default async function OverviewPage() {
   // Every finding behind the money above: high-severity flags, discounts, and every line that withholds
   // euros (whatever its severity), including invoices already sent with an amount still withheld,
   // so the list adds up to the "Overcharges withheld" figure.
-  const attention = state.documents
+  const attention = findingsSource.documents
     .filter((d) => d.review && (!isPaidOrSent(d) || effective(d)!.action !== "pay_full"))
     .flatMap((d) =>
       d.review!.findings
@@ -119,38 +130,65 @@ export default async function OverviewPage() {
         </p>
       </header>
 
-      <Card className="ruled relative overflow-hidden px-5 py-6 sm:px-8 sm:py-8">
+      <Card className="ruled rise relative overflow-hidden px-5 py-6 sm:px-8 sm:py-8" style={{ animationDelay: "40ms" }}>
         <div className="grid gap-8 md:grid-cols-[1.3fr_1fr]">
           <div>
-            <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-olive">
+            <p className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-olive">
               <IconShield size={15} /> Protected this week
+              {previewing && (
+                <span className="rounded-full border border-line-2 bg-paper px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-muted">
+                  Projected
+                </span>
+              )}
             </p>
-            <p className="num font-display mt-2 text-6xl leading-none text-ink sm:text-7xl">{fmt(s.protectedCents)}</p>
+            <p className="num font-display mt-2 text-6xl leading-none text-ink sm:text-7xl">
+              <CountUpMoney cents={hero.protectedCents} />
+            </p>
             <p className="mt-3 max-w-md text-sm text-ink-2">
-              {s.protectedCents > 0
-                ? "Overcharges withheld until the supplier sends a credit note, a double payment held, and early-payment discounts captured, each backed by the exact numbers."
-                : "Review the inbox and this fills up with every overcharge, duplicate and discount Supplora finds."}
+              {previewing
+                ? `What Supplora will protect once you review the ${s.documents} documents in your inbox — overcharges withheld and a double payment held — from Claude's recorded readings run through the rules${
+                    hero.discountsAvailableCents > 0 ? `, plus ${fmt(hero.discountsAvailableCents)} of early-payment discount to capture` : ""
+                  }. Review the inbox to lock it in.`
+                : hero.protectedCents > 0
+                  ? "Overcharges withheld until the supplier sends a credit note, a double payment held, and early-payment discounts captured, each backed by the exact numbers."
+                  : "Review the inbox and this fills up with every overcharge, duplicate and discount Supplora finds."}
             </p>
           </div>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-4 self-end text-sm">
             <div>
               <dt className="text-muted">Overcharges withheld</dt>
-              <dd className="num text-lg font-semibold text-terracotta">{fmt(s.overchargesCaughtCents)}</dd>
+              <dd className="num text-lg font-semibold text-terracotta">
+                <CountUpMoney cents={hero.overchargesCaughtCents} durationMs={900} />
+              </dd>
             </div>
             <div>
               <dt className="text-muted">Duplicates held</dt>
-              <dd className="num text-lg font-semibold text-terracotta">{fmt(s.duplicatesBlockedCents)}</dd>
+              <dd className="num text-lg font-semibold text-terracotta">
+                <CountUpMoney cents={hero.duplicatesBlockedCents} durationMs={900} />
+              </dd>
             </div>
             <div>
               <dt className="text-muted">Discounts captured</dt>
-              <dd className="num text-lg font-semibold text-olive">{fmt(s.discountsCapturedCents)}</dd>
-              {s.discountsAvailableCents > 0 && <dd className="text-xs text-muted">{fmt(s.discountsAvailableCents)} still available</dd>}
+              <dd className="num text-lg font-semibold text-olive">
+                <CountUpMoney cents={hero.discountsCapturedCents} durationMs={900} />
+              </dd>
+              {hero.discountsAvailableCents > 0 && (
+                <dd className="text-xs text-muted">
+                  {fmt(hero.discountsAvailableCents)} {previewing ? "to capture" : "still available"}
+                </dd>
+              )}
             </div>
             <div>
               <dt className="text-muted">Sent via PayPal</dt>
-              <dd className="num text-lg font-semibold text-ink">{fmt(s.sentCents)}</dd>
-              {s.awaitingClaimCents > 0 && <dd className="text-xs text-[#8a5a0c]">{fmt(s.awaitingClaimCents)} awaiting supplier claim</dd>}
-              {s.openPayableCents > 0 && <dd className="text-xs text-muted">{fmt(s.openPayableCents)} still open</dd>}
+              <dd className="num text-lg font-semibold text-ink">
+                <CountUpMoney cents={hero.sentCents} durationMs={900} />
+              </dd>
+              {hero.awaitingClaimCents > 0 && <dd className="text-xs text-[#8a5a0c]">{fmt(hero.awaitingClaimCents)} awaiting supplier claim</dd>}
+              {hero.openPayableCents > 0 && (
+                <dd className="text-xs text-muted">
+                  {fmt(hero.openPayableCents)} {previewing ? "ready to pay" : "still open"}
+                </dd>
+              )}
             </div>
           </dl>
         </div>
@@ -160,7 +198,11 @@ export default async function OverviewPage() {
         <SectionTitle id="week" kicker="This week's run" title="From inbox to paid, with you in control" />
         <ol className="grid gap-3 md:grid-cols-5">
           {steps.map((step, i) => (
-            <li key={step.title} className={cx("flex flex-col rounded-2xl border bg-card p-4", step.done ? "border-olive/30" : "border-line")}>
+            <li
+              key={step.title}
+              style={{ animationDelay: `${120 + i * 70}ms` }}
+              className={cx("rise flex flex-col rounded-2xl border bg-card p-4", step.done ? "border-olive/30" : "border-line")}
+            >
               <div className="flex items-center gap-2">
                 <span
                   className={cx(
@@ -185,7 +227,7 @@ export default async function OverviewPage() {
 
       <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
         <Card className="p-5 sm:p-6">
-          <SectionTitle kicker="Needs your eye" title="What Supplora found" />
+          <SectionTitle kicker={previewing ? "Needs your eye · projected" : "Needs your eye"} title={previewing ? "What Supplora will flag" : "What Supplora found"} />
           {attention.length === 0 ? (
             <p className="py-6 text-sm text-muted">
               {s.reviewed === 0 ? (
@@ -202,10 +244,10 @@ export default async function OverviewPage() {
             </p>
           ) : (
             <ul className="divide-y divide-line">
-              {attention.map(({ doc, f, supplier }) => {
+              {attention.map(({ doc, f, supplier }, i) => {
                 const e = effective(doc)!;
                 return (
-                  <li key={`${doc.id}-${f.id}`}>
+                  <li key={`${doc.id}-${f.id}`} className="rise" style={{ animationDelay: `${i * 55}ms` }}>
                     <Link href={`/inbox/${doc.id}`} className="group flex gap-3 py-3">
                       <SeverityIcon severity={f.severity} size={17} />
                       <div className="min-w-0 flex-1">
