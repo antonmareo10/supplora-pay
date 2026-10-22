@@ -8,6 +8,8 @@ It grows out of [Supplora](https://www.supplora.app), an AI tool that reads rest
 
 Built for the **PayPal AI Hackathon** (2026) · *Best Use of PayPal + AI* · *Best Use of Agentic Commerce*. MIT licensed. Development started on 16 Oct 2026 (first commit `dc36498`); what was built when is under "Built during the hackathon" below, and the full commit history is public.
 
+**Demo video (2:30):** https://youtu.be/UstM9s4tu6o  ·  **Live demo:** https://supplora-pay.vercel.app
+
 ![Overview](docs/screenshots/devpost/01-catches.png)
 
 ---
