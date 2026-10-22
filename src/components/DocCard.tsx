@@ -57,8 +57,11 @@ export function DocThumb({ doc, className }: { doc: DocumentRecord; className?: 
       </div>
     );
   }
+  // Static samples ship a 320 px WebP thumbnail next to the full 1240 px scan (public/samples/thumbs/):
+  // the inbox shows seven of them at ~75-160 CSS px, so this saves about half a megabyte on a phone.
+  const thumb = /^\/samples\/[\w-]+\.png$/.test(doc.url) ? doc.url.replace(/^\/samples\/([\w-]+)\.png$/, "/samples/thumbs/$1.webp") : doc.url;
   // eslint-disable-next-line @next/next/no-img-element -- local user uploads and static samples, no optimisation needed
-  return <img src={doc.url} alt="" loading="lazy" className={cx("rounded-lg border border-line bg-white object-cover object-top", className)} />;
+  return <img src={thumb} alt="" loading="lazy" decoding="async" className={cx("rounded-lg border border-line bg-white object-cover object-top", className)} />;
 }
 
 export function DocCard({ doc, today }: { doc: DocumentRecord; today: string }) {

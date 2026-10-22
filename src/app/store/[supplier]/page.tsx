@@ -30,23 +30,23 @@ export default async function StorePage(props: PageProps<"/store/[supplier]">) {
 
   return (
     <div className="min-h-screen bg-[#f7f7f5] text-neutral-900" style={{ fontFamily: "var(--font-inter)" }}>
-      <div className="bg-ink px-4 py-2 text-center text-xs text-paper/90">
+      <aside aria-label="Simulated store" className="bg-ink px-4 py-2 text-center text-xs text-paper/90">
         <Link href="/reorder" className="inline-flex items-center gap-1.5 hover:underline">
           <IconArrowLeft size={13} /> Back to Supplora Pay
         </Link>
         <span className="mx-2 opacity-40">·</span>
         You are viewing the online store of {supplier.name} (simulated merchant site)
-      </div>
+      </aside>
       <header style={{ background: accent }} className="text-white">
         <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-8 sm:flex-row sm:items-end sm:justify-between sm:px-8">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/70">Trade store</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/90">Trade store</p>
             <h1 className="mt-1 text-3xl font-black tracking-tight sm:text-4xl">{supplier.name}</h1>
             <p className="mt-1 text-white/85">{supplier.store.tagline}</p>
           </div>
           <div className="rounded-xl bg-white/12 px-4 py-3 text-sm ring-1 ring-white/25">
             <p className="font-semibold">Trade account: {RESTAURANT.name}</p>
-            <p className="flex items-center gap-1.5 text-white/80">
+            <p className="flex items-center gap-1.5 text-white">
               <IconTruck size={14} /> {supplier.store.leadTime}
             </p>
           </div>

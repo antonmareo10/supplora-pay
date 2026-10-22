@@ -10,7 +10,7 @@
   --card: #fffcf6;
   --ink: #1b1914;
   --ink-2: #4a4437;
-  --muted: #7d7463;
+  --muted: #655c4c; /* 4.66:1 on paper-3, the darkest paper; WCAG AA for small text everywhere */
   --line: #ddd2bd;
   --line-2: #cbbd9f;
   --olive: #2f4a35;

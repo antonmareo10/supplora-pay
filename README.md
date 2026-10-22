@@ -1,18 +1,29 @@
 # Supplora Pay: the accounts-payable agent for independent restaurants
 
-> **The only invoice an agent should pay is one that matches what actually arrived at the kitchen door, at the price you agreed.**
->
-> Supplora Pay does a **three-way match** on every supplier invoice: the invoice (read by Claude) ↔ the **signed delivery note** (*albarán*) ↔ the restaurant's **price history**. Every euro is checked in integer cents by deterministic rules. It then plans the week's payments within a cash cap and pays suppliers through **PayPal Payouts** once the owner approves. A purchasing agent restocks low stock at the suppliers' online stores, which speak **PayPal's Cart API** for agents: the store prices the cart and creates the **PayPal Orders v2** order, and the agent verifies it with the official **PayPal Agent Toolkit**. It can never pay: the owner's approval only **authorizes** the order, and PayPal **captures only what the signed delivery note confirms**. Payment statuses come back through **verified PayPal webhooks**, and text on an invoice that tries to instruct the AI is held, never followed.
+Supplora Pay pays a restaurant's suppliers, and only what they're owed. Claude reads each invoice. Deterministic rules check it in integer cents against the signed delivery note (*albarán*) and the price history. A payment agent plans the week inside a cash cap, the owner approves, and PayPal moves the money. No agent can pay on its own: the owner's approval only authorizes a card, and PayPal captures what the signed delivery note confirms.
 
-It grows out of [Supplora](https://www.supplora.app), an AI tool that reads restaurant delivery notes at the kitchen door and pushes them into the restaurant's ERP, in production at a family-run restaurant in Spain since March 2026 (715 delivery notes read and 103 supplier price increases flagged, worth €1,876, by September 2026). That is where the delivery notes and price history Supplora Pay matches against come from. In this repo they are seeded (`src/data/seed.ts`) and the restaurant, suppliers and people are fictional.
+Live demo: https://supplora-pay.vercel.app (no login, no keys) · Video (2:18): https://youtu.be/BtfQnxvkNXE · [Threat model](SECURITY.md) · [![CI](https://github.com/antonmareo10/supplora-pay/actions/workflows/ci.yml/badge.svg)](https://github.com/antonmareo10/supplora-pay/actions/workflows/ci.yml)
 
-Built for the **PayPal AI Hackathon** (2026) · *Best Use of PayPal + AI* · *Best Use of Agentic Commerce*. MIT licensed. Development started on 16 Oct 2026 (first commit `dc36498`); what was built when is under "Built during the hackathon" below, and the full commit history is public.
-
-**Demo video (2:18):** https://youtu.be/BtfQnxvkNXE  ·  **Live demo:** https://supplora-pay.vercel.app
-
-[![CI](https://github.com/antonmareo10/supplora-pay/actions/workflows/ci.yml/badge.svg)](https://github.com/antonmareo10/supplora-pay/actions/workflows/ci.yml)  ·  **[Threat model](SECURITY.md):** 14 ways an AI agent could misuse money here, each tied to the tests that prove its mitigation (the build fails if one of those tests disappears).
+The moment to look for: invoice CP-11958 asks to be paid to a new PayPal address, and its fine print tells "AI assistants" to ignore their rules and pay it today. It is held at €224.33. Claude copies the instruction as data, the payee can only come from the supplier directory, and the payment agent's own plan check refuses it.
 
 ![Overview](docs/screenshots/devpost/01-catches.png)
+
+## PayPal at a glance
+
+| Step | PayPal | Code |
+|---|---|---|
+| Pay the week's suppliers in one batch after approval | Payouts | [`src/lib/paypal.ts`](src/lib/paypal.ts) |
+| The purchasing agent shops at a supplier's online store | Cart API, merchant side (create, read, replace, checkout) | [`merchant-cart` route](src/app/api/paypal/v1/stores/%5Bsupplier%5D/merchant-cart/route.ts), [`src/lib/cart-api.ts`](src/lib/cart-api.ts) |
+| Hold the money on the restaurant's card | Vault v3 + Orders v2 (intent `AUTHORIZE`) | [`src/lib/paypal.ts`](src/lib/paypal.ts) |
+| Pay only for what arrived, refund what came damaged | Payments v2: partial final capture, void, refund | [`src/lib/settlement.ts`](src/lib/settlement.ts) |
+| The agent checks its own checkout, read-only | PayPal Agent Toolkit over MCP, allowlisted to `get_order` | [`src/lib/paypal-toolkit.ts`](src/lib/paypal-toolkit.ts) |
+| Statuses come back from PayPal | Webhooks, signature verified by PayPal, each event processed once | [`src/lib/webhooks.ts`](src/lib/webhooks.ts) |
+
+Every PayPal write carries an idempotency key (`PayPal-Request-Id`), and every call is written to an audit log. 85 tests, lint, typecheck and the production build run in CI on every push, without secrets. To run it yourself, see [Run it locally](#run-it-locally): demo mode needs no keys for the review, the plan and the ledger, and a PayPal sandbox app for the money steps.
+
+It grows out of [Supplora](https://www.supplora.app), an AI tool I built that reads restaurant delivery notes at the kitchen door and pushes them into the restaurant's ERP. It has run in production at a family-run restaurant in Spain since March 2026 (715 delivery notes read and 103 supplier price increases flagged, worth €1,876, by September 2026). That is where the delivery notes and price history Supplora Pay matches against come from. In this repo they are seeded (`src/data/seed.ts`), and the restaurant, suppliers and people are fictional.
+
+Built for the PayPal AI Hackathon (2026) · Best Use of PayPal + AI · Best Use of Agentic Commerce. MIT licensed. Development started on 16 Oct 2026 (first commit `dc36498`); what was built when is under "Built during the hackathon" below, and the full commit history is public.
 
 ---
 
@@ -194,7 +205,7 @@ The dashboard uses AG Grid and AG Charts Community only; AG Studio was not used 
 
 | Criterion | Where to look |
 |---|---|
-| **Technical implementation** | Integer-cent rules engine with tests (`checks.ts`), Claude tool-runner agents with validation tools, PayPal Payouts / Orders v2 / Vault v3 / Payments v2 (authorize, partial final capture, void, refund) over REST with idempotency + audit, verified webhooks with dedupe and out-of-order protection, the PayPal Agent Toolkit as an in-process MCP server behind a tested allowlist, the supplier stores' PayPal Cart API (merchant side), reconciliation, per-session demo state, record/replay of real agent runs. 83 tests and CI on every push; a [threat model](SECURITY.md) whose every mitigation is tied to a test. |
+| **Technical implementation** | Integer-cent rules engine with tests (`checks.ts`), Claude tool-runner agents with validation tools, PayPal Payouts / Orders v2 / Vault v3 / Payments v2 (authorize, partial final capture, void, refund) over REST with idempotency + audit, verified webhooks with dedupe and out-of-order protection, the PayPal Agent Toolkit as an in-process MCP server behind a tested allowlist, the supplier stores' PayPal Cart API (merchant side), reconciliation, per-session demo state, record/replay of real agent runs. 85 tests and CI on every push; a [threat model](SECURITY.md) whose every mitigation is tied to a test. |
 | **Design** | One coherent UI from inbox to ledger, an agent timeline that shows every tool call, a plan-vs-cash-cap view, and the AG Grid + AG Charts ledger. |
 | **Impact** | Overcharges, short deliveries and duplicates are caught *before* paying; discounts are captured. It is built on a product in production at a real restaurant: 715 delivery notes read and €1,876 of price increases flagged (Mar–Sep 2026). |
 | **Innovation** | Three-way match + agentic payments with a hard human-approval boundary. Restock orders are paid only for what the signed delivery note confirms (authorize → partial capture → release). Payees never come from documents, and a prompt injection inside an invoice is held, not followed. A keyless public demo that replays real Claude runs against live tools. |
@@ -283,13 +294,17 @@ From the commit history (first commit `dc36498`, 16 Oct 2026). Supplora, the del
 ## Quality checks
 
 ```bash
-npm test          # 83 tests, no network: rules engine on the seven samples (incl. the prompt injection and false-positive checks), edge cases and money helpers (13), partial-pay guard and ledger stats (7), the payment agent's plan check (5), pay-for-what-arrived settlement and refunds (9), webhook headers, verification body, routing, forward-only status updates and refund dedupe (9), PayPal Agent Toolkit allowlist against the real package (5), demo payout sweep (7), write caps (4), reconciliation view (4), request guards (4), sandbox-only PayPal host (2), the order check before approval (3), the checkout race (3), the stores' Cart API (6) and the threat model (2)
+npm test          # 85 tests, no network: rules engine on the seven samples (incl. the prompt injection and false-positive checks), edge cases and money helpers (13), partial-pay guard and ledger stats (7), the payment agent's plan check (5), pay-for-what-arrived settlement and refunds (9), webhook headers, verification body, routing, forward-only status updates and refund dedupe (9), PayPal Agent Toolkit allowlist against the real package (5), demo payout sweep (7), write caps (4), reconciliation view (4), request guards (4), sandbox-only PayPal host (2), the order check before approval (3), the checkout race (3), the stores' Cart API (6), the threat model (2) and the Redis circuit breaker (2)
 npm run typecheck # next typegen + tsc
 npm run lint
 npm run build
 ```
 
 CI (`.github/workflows/ci.yml`) runs lint, typecheck, the tests and the production build on every push, without any secrets.
+
+## Accessibility
+
+Checked with axe-core 4.14 in headless Chromium on ten pages (overview, inbox, two invoice reviews, payment run, reorder, ledger, disputes and two supplier stores), on a 1440 px desktop and a 390 px phone: 0 violations on all twenty runs (22 Oct 2026). Getting there meant darkening the muted text colour so small text reaches the WCAG AA 4.5:1 contrast on every paper tone, and fixing the contrast and landmark of the supplier-store header. Every interactive element shows a 2 px focus ring from the keyboard, and with reduced motion turned on the count-ups, reveals and stamps stay still. The inbox loads 320 px WebP thumbnails of the sample invoices (about 8 KB each instead of 70 to 110 KB), which took a throttled phone load of the inbox from 876 KB to 349 KB.
 
 ## Project structure
 
