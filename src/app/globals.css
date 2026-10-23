@@ -16,7 +16,7 @@
   --olive: #2f4a35;
   --olive-2: #46684d;
   --olive-soft: #e4ebdc;
-  --terracotta: #b0452a;
+  --terracotta: #a63f25; /* 5.0:1 on terracotta-soft, so small pill text passes WCAG AA */
   --terracotta-soft: #f6e1d7;
   --saffron: #b97a12;
   --saffron-soft: #f7ebcf;
@@ -143,6 +143,12 @@ body {
 }
 .stamp-tilt {
   transform: rotate(-2.5deg);
+}
+
+/* Saffron is a fill colour (bars, dots, borders). As text it uses a darker ink, so small text such as
+   the "Pay partial" stamps and the "Math error" labels reaches the WCAG AA 4.5:1 contrast on paper. */
+.text-saffron {
+  color: #8a5a0c;
 }
 
 @keyframes rise {

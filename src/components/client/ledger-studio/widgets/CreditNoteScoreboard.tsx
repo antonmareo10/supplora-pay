@@ -86,7 +86,7 @@ export default function CreditNoteScoreboard(params: AgWidgetParams<ScoreboardDe
           return (
             <li
               key={String(row.value)}
-              className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 transition ${on ? "border-saffron bg-saffron-soft" : "border-line bg-paper/60"} ${selected.size > 0 && !on ? "opacity-55" : ""}`}
+              className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 transition ${on ? "border-saffron bg-saffron-soft" : "border-line bg-paper/60"} ${selected.size > 0 && !on ? "opacity-75" : ""}`}
             >
               <span className="num grid h-7 w-7 shrink-0 place-items-center rounded-full bg-ink text-[12px] font-semibold text-paper" aria-hidden>
                 {i + 1}

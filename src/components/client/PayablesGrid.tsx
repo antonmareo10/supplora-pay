@@ -821,7 +821,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
           aria-pressed={!filtered}
           className={cx("rounded-full border px-3 py-1 text-xs font-medium transition", !filtered ? "border-ink bg-ink text-paper" : "border-line bg-card text-ink-2 hover:border-line-2")}
         >
-          {filtered ? "Clear filters" : "All"} <span className="num opacity-70">{rows.length}</span>
+          {filtered ? "Clear filters" : "All"} <span className="num">{rows.length}</span>
         </button>
         {presentStatuses.map((s) => {
           const n = rows.filter((r) => r.status === s).length;
@@ -834,7 +834,7 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
               aria-pressed={on}
               className={cx("rounded-full border px-3 py-1 text-xs font-medium transition", on ? STATUS_PILL[s] : "border-line bg-card text-ink-2 hover:border-line-2")}
             >
-              {STATUS_LABEL[s]} <span className="num opacity-70">{n}</span>
+              {STATUS_LABEL[s]} <span className="num">{n}</span>
             </button>
           );
         })}
@@ -853,8 +853,8 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
           {groups.map((g) => (
             <span key={g.key} className={cx("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-medium", g.tone)}>
               <span>{g.label}</span>
-              <span className="opacity-70">{g.count}</span>
-              <span className="num opacity-70">· {fmt(g.cents)}</span>
+              <span>{g.count}</span>
+              <span className="num">· {fmt(g.cents)}</span>
             </span>
           ))}
         </div>
