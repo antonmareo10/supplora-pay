@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { connection } from "next/server";
 import { AuditLog } from "@/components/client/AuditLog";
 import { PayablesSection } from "@/components/client/PayablesSection";
@@ -54,6 +55,22 @@ export default async function LedgerPage() {
         />
       </div>
 
+      {payableRows.length > 0 && (
+        <Link
+          href="/ledger/studio"
+          className="group flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-ledger/25 bg-ledger-soft/70 px-5 py-4 transition hover:border-ledger/50"
+        >
+          <span className="min-w-0">
+            <span className="block text-[11px] font-semibold uppercase tracking-[0.14em] text-ledger">AG Studio · Claude</span>
+            <span className="mt-0.5 block text-[15px] font-medium text-ink">Ask the ledger anything</span>
+            <span className="block text-sm text-ink-2">
+              The week as an AG Studio report: cash out by week, who owes a credit note, the evidence behind every hold. Ask Claude to build a view for you.
+            </span>
+          </span>
+          <span className="shrink-0 rounded-full bg-ledger px-4 py-2 text-sm font-semibold text-paper transition group-hover:bg-ledger-2">Open AG Studio</span>
+        </Link>
+      )}
+
       <Card className="p-5 sm:p-6">
         <SectionTitle kicker="Kept back or saved" title="What the checks held back, and what was saved" />
         <dl className="grid gap-4 sm:grid-cols-4">
@@ -89,7 +106,7 @@ export default async function LedgerPage() {
           id="invoices"
           kicker="Accounts payable"
           title="Payables"
-          aside={<span className="text-xs text-muted">AG Grid + AG Charts (Community) · cross-filtered</span>}
+          aside={<span className="text-xs text-muted">AG Grid + AG Charts (Community) · cross-filtered · decisions editable in place</span>}
         />
         {payableRows.length === 0 ? (
           <Card className="px-6 py-10 text-center text-muted">Nothing reviewed yet. Review the inbox to populate the ledger.</Card>

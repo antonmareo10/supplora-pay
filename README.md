@@ -188,16 +188,30 @@ Model `claude-opus-5-5` via the official `@anthropic-ai/sdk`, with `output_confi
 
 ![Agentic reorder](docs/screenshots/devpost/06-restock-checkout.png)
 
-## Ledger: AG Grid + AG Charts (Community)
+## Ledger: AG Studio, AG Grid and AG Charts
 
-`/ledger` is the owner's dashboard. It uses only the free, MIT-licensed Community editions, so there is no Enterprise feature, licence key or watermark.
+The ledger has two views of the same numbers: an AG Grid one where the owner works, and an AG Studio report where the owner (or Claude) asks questions.
 
+### `/ledger`: AG Grid + AG Charts (Community)
+
+The free, MIT-licensed Community editions only: no Enterprise feature, licence key or watermark.
+
+- **Decisions changed in place:** the Decision column opens a popup cell editor (pay in full, pay partial or hold, with a reason). It saves through the same route as the review page (`/api/documents/[id]/decision`), so the server's rules still apply: nothing sent to PayPal can change, a partial payment needs line overcharges to withhold, a fraud hold shows a warning, and every change goes to the audit log with its reason. The ledger then reloads from the server.
+- **Export for the accountant (gestoría):** AG Grid's CSV export with Spanish headers (fecha, nº factura, NIF, base imponible, IVA, total, retenido, pagado), semicolons, decimal commas and dd/mm/yyyy dates, so Spanish Excel opens it as is. The plain CSV export is still there.
 - **Theming:** Quartz re-skinned to the app's "ledger on warm paper" palette (`src/components/client/ag-theme.ts`), including the cell-change flash colour.
-- **Custom widgets:** status pills, severity dots, a **findings tooltip** that shows the evidence behind every flag, an in-cell bar on withheld amounts, due dates with relative labels, PayPal id cells, and a reconciliation grid with match chips.
-- **Layout:** column groups (Amounts / Why / PayPal), supplier pinned left for narrow screens, a flexible, wrapping "Top finding" column so the grid fits a laptop screen without horizontal scrolling, hidden columns that still feed the quick search and the CSV export, a filter-aware pinned **totals row**, and a live subtotal strip.
-- **Cross-filtering:** an AG Charts stacked bar ("where the money stands, by supplier") is recomputed from the rows that pass the grid's filters. Clicking a supplier's bar filters the grid, just as the status chips do (AG Grid external filters); the legend under the chart shows and hides series.
+- **Custom cells:** status pills, severity dots, a **findings tooltip** that shows the evidence behind every flag, an in-cell bar on withheld amounts, due dates with relative labels, PayPal id cells, and a reconciliation grid with match chips.
+- **Layout:** column groups (Amounts / Why / PayPal), supplier pinned left for narrow screens, a flexible, wrapping "Top finding" column so the grid fits a laptop screen without horizontal scrolling, hidden columns that still feed the quick search and the exports, a filter-aware pinned **totals row**, and a live subtotal strip.
+- **Cross-filtering:** an AG Charts stacked bar ("where the money stands, by supplier") is recomputed from the rows that pass the grid's filters. Clicking a supplier's bar filters the grid, just as the status chips do (AG Grid external filters).
 
-The dashboard uses AG Grid and AG Charts Community only; AG Studio was not used in this project.
+### `/ledger/studio`: AG Studio and the Studio Agent Framework with Claude
+
+- **Data model** (`src/lib/studio-data.ts`, `src/components/client/ledger-studio/data.ts`): six related tables (invoices, findings with their evidence, suppliers, PayPal payouts, restock orders, price changes), a calendar, two ratios, euros and dates formatted as in the rest of the app. The amounts come from the same helpers as the ledger's tiles, and a test checks that Studio's totals equal them.
+- **Report:** five pages: what we owe (still to pay by the week it falls due, by supplier), why we held money back, suppliers and prices (this week's unit price against the last invoice), PayPal (payouts and restock orders with their ids) and a blank page for the owner's own views. Page tabs, view and edit modes, and *Save* keeps the owner's version of the report in the browser.
+- **Theming:** Studio's theme points at the app's CSS tokens (`ledger-studio/theme.ts`), so the canvas, widgets, grids and charts read as part of the page.
+- **Custom widgets** (`ledger-studio/widgets/`): a **credit-note scoreboard** (who owes the restaurant money back, with a link to the drafted request) that cross-filters the page, and **evidence cards** that follow every filter and link to each invoice's review.
+- **Studio Agent Framework with Claude:** a custom provider adapter (`ledger-studio/ai/adapter.ts`) sends each agent turn to `/api/studio/llm`, which calls Claude (`claude-opus-5-5`, streaming, prompt caching, server-side refusal fallback) and streams the turn back as AG-UI events. Claude's signed thinking blocks are kept per turn and sent back unchanged, so a multi-turn tool loop stays valid (`src/lib/studio-llm.ts`, with tests). The team: a custom accounts-payable clerk, built on Studio's lead agent with the restaurant's rules, that delegates to Studio's built-in Data, Planning, Page and Widget agents. Its one custom tool, `explain_invoice`, only reads; no agent has a tool that pays, approves or changes a decision.
+- **Public demo:** no API key, so the suggested prompts replay recordings of real runs (`src/data/recorded/studio-runs.json`) turn by turn, and Studio executes the recorded tool calls against the visitor's own dashboard. With a key (locally, or `STUDIO_AI_LIVE=1` on a deployment, capped per visitor) the chat is live. Recording: `RECORD_DEMO=1`, open `/ledger/studio?record=1`, run the prompts, *Save recorded runs*.
+- **Licence:** AG Studio is a commercial product. Set `AG_STUDIO_LICENSE_KEY` (a free 45-day trial key from ag-grid.com/studio/license-pricing); without it Studio runs as a trial with a watermark. AG Studio's licence covers its own grid and chart widgets; the custom widgets use no Enterprise code.
 
 ![Ledger](docs/screenshots/devpost/07-ledger-grid.png)
 
@@ -205,12 +219,13 @@ The dashboard uses AG Grid and AG Charts Community only; AG Studio was not used 
 
 | Criterion | Where to look |
 |---|---|
-| **Technical implementation** | Integer-cent rules engine with tests (`checks.ts`), Claude tool-runner agents with validation tools, PayPal Payouts / Orders v2 / Vault v3 / Payments v2 (authorize, partial final capture, void, refund) over REST with idempotency + audit, verified webhooks with dedupe and out-of-order protection, the PayPal Agent Toolkit as an in-process MCP server behind a tested allowlist, the supplier stores' PayPal Cart API (merchant side), reconciliation, per-session demo state, record/replay of real agent runs. 85 tests and CI on every push; a [threat model](SECURITY.md) whose every mitigation is tied to a test. |
-| **Design** | One coherent UI from inbox to ledger, an agent timeline that shows every tool call, a plan-vs-cash-cap view, and the AG Grid + AG Charts ledger. |
+| **Technical implementation** | Integer-cent rules engine with tests (`checks.ts`), Claude tool-runner agents with validation tools, PayPal Payouts / Orders v2 / Vault v3 / Payments v2 (authorize, partial final capture, void, refund) over REST with idempotency + audit, verified webhooks with dedupe and out-of-order protection, the PayPal Agent Toolkit as an in-process MCP server behind a tested allowlist, the supplier stores' PayPal Cart API (merchant side), reconciliation, per-session demo state, record/replay of real agent runs. 104 tests and CI on every push; a [threat model](SECURITY.md) whose every mitigation is tied to a test. |
+| **Design** | One coherent UI from inbox to ledger, an agent timeline that shows every tool call, a plan-vs-cash-cap view, the AG Grid + AG Charts ledger with decisions editable in place, and the AG Studio report in the app's own theme. |
 | **Impact** | Overcharges, short deliveries and duplicates are caught *before* paying; discounts are captured. It is built on a product in production at a real restaurant: 715 delivery notes read and €1,876 of price increases flagged (Mar–Sep 2026). |
 | **Innovation** | Three-way match + agentic payments with a hard human-approval boundary. Restock orders are paid only for what the signed delivery note confirms (authorize → partial capture → release). Payees never come from documents, and a prompt injection inside an invoice is held, not followed. A keyless public demo that replays real Claude runs against live tools. |
 | **Presentation** | The hosted demo, [docs/RECORDING.md](docs/RECORDING.md), Devpost screenshots in `docs/screenshots/devpost/` with [captions](docs/screenshots/devpost/CAPTIONS.md). |
 | **Best Use of PayPal + AI** | Claude reads, checks and plans; PayPal Payouts pays only what the rules and the owner approve. |
+| **Best Use of AG Grid (AG Studio)** | `/ledger/studio`: a themed AG Studio report over six related tables, two custom widgets that cross-filter, and the Studio Agent Framework with Claude as a swapped-in adapter: a custom clerk agent that delegates to Studio's built-in agents. `/ledger`: AG Grid popup cell editor for decisions (server-validated) and a CSV export for the accountant. |
 | **Best Use of Agentic Commerce** | The purchasing agent shops the suppliers' stores through PayPal's Cart API (the store prices and validates every cart; checkout completes only after the owner's approval), verifies each PayPal order with the PayPal Agent Toolkit, stays within a limit, and cannot pay; the owner's approval authorizes, and PayPal captures only what arrived. |
 
 ## Architecture
@@ -290,11 +305,12 @@ From the commit history (first commit `dc36498`, 16 Oct 2026). Supplora, the del
 | 20 Oct 2026 | AG Grid + AG Charts ledger; the PayPal Agent Toolkit as an in-process MCP server; the keyless public demo (recorded Claude runs, per-visitor sessions); docs |
 | 21 Oct 2026 | Honest payout states, demo fund sweep and write caps; hosted demo on Vercel; **pay only for what arrived** (authorize → partial capture → release), **verified PayPal webhooks**, the **prompt-injection** invoice and its guardrails |
 | 22 Oct 2026 | The supplier stores' **PayPal Cart API** (merchant side) and the purchasing agent shopping through it; **refunds** for damaged goods on the capture; CI; the [threat model](SECURITY.md) tied to tests |
+| 23 Oct 2026 | **AG Studio** ledger (data model, themed report, two custom widgets) and the **Studio Agent Framework with Claude** (adapter, server route, clerk agent, recorded runs for the public demo); decisions editable in the AG Grid ledger; the accountant's CSV |
 
 ## Quality checks
 
 ```bash
-npm test          # 85 tests, no network: rules engine on the seven samples (incl. the prompt injection and false-positive checks), edge cases and money helpers (13), partial-pay guard and ledger stats (7), the payment agent's plan check (5), pay-for-what-arrived settlement and refunds (9), webhook headers, verification body, routing, forward-only status updates and refund dedupe (9), PayPal Agent Toolkit allowlist against the real package (5), demo payout sweep (7), write caps (4), reconciliation view (4), request guards (4), sandbox-only PayPal host (2), the order check before approval (3), the checkout race (3), the stores' Cart API (6), the threat model (2) and the Redis circuit breaker (2)
+npm test          # 104 tests, no network: rules engine on the seven samples (incl. the prompt injection and false-positive checks), edge cases and money helpers (13), partial-pay guard and ledger stats (7), the payment agent's plan check (5), pay-for-what-arrived settlement and refunds (9), webhook headers, verification body, routing, forward-only status updates and refund dedupe (9), PayPal Agent Toolkit allowlist against the real package (5), demo payout sweep (7), write caps (4), reconciliation view (4), request guards (4), sandbox-only PayPal host (2), the order check before approval (3), the checkout race (3), the stores' Cart API (6), the threat model (2), the Redis circuit breaker (2), the AG Studio tables against the ledger's totals (7) and the AG Studio ⇄ Claude translation (12)
 npm run typecheck # next typegen + tsc
 npm run lint
 npm run build
@@ -327,10 +343,14 @@ src/lib/plan-rules.ts    the payment agent's plan check and what it may read abo
 src/lib/demo-sweep.ts    public demo: returns unclaimed sandbox payouts (+ tests); write-limits.ts: demo write caps (+ tests)
 src/lib/paypal-toolkit*.ts  PayPal Agent Toolkit MCP wiring + allowlist policy (+ tests)
 src/lib/reconcile.ts     ledger ↔ PayPal reconciliation
+src/lib/studio-data.ts   the ledger as related tables for AG Studio (+ tests against the ledger's totals)
+src/lib/studio-llm.ts    AG Studio agent turn ⇄ Claude Messages API (+ tests); api/studio/llm: the streaming route
+src/components/client/ledger-studio/   AG Studio: data model, theme, report, custom widgets, agents and adapters
+src/components/client/DecisionEditor.tsx   AG Grid popup cell editor for a decision, saved through the server's rules
 src/lib/agent-run.ts     live / record / replay driver for the agents
 src/lib/state.ts, session.ts   state store (file, per-session memory, Redis) and demo sessions
 src/data/seed.ts         supplier directory, price history, delivery notes, stores, inventory
-src/data/recorded/       real Claude outputs replayed by the public demo
+src/data/recorded/       real Claude outputs replayed by the public demo (studio-runs.json: the AG Studio agent runs)
 scripts/                 generate-samples.mjs (invoice images), register-webhook.mjs (PayPal webhook id)
 docs/                    DEPLOY.md, RECORDING.md, screenshots
 SECURITY.md              threat model: each threat, its mitigation and the tests that prove it

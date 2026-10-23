@@ -15,7 +15,10 @@
 //    flag, an in-cell bar on withheld amounts, due dates with relative labels, PayPal id cells;
 //  - cross-filtering: status chips and a click on a supplier's bar in the chart are AG Grid
 //    external filters; the chart is recomputed from the rows that pass the grid's filters
-//    (quick search, column filters, chips), so chart, grid and totals always agree.
+//    (quick search, column filters, chips), so chart, grid and totals always agree;
+//  - editing: the Decision column opens a popup cell editor (pay in full / partial / hold, with a
+//    reason) that saves through the same server route and rules as the review page;
+//  - export: plain CSV, and a CSV for the accountant (gestoría) that Spanish Excel opens as is.
 // Native row grouping/aggregation and integrated charts are Enterprise features, so the
 // grouping strip and the chart are built on the Community APIs instead.
 
@@ -34,6 +37,7 @@ import {
   type ValueGetterParams,
 } from "ag-grid-community";
 import { AgGridReact } from "ag-grid-react";
+import { DecisionEditor } from "./DecisionEditor";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cx } from "@/components/ui";
 import { relativeDue } from "@/lib/dates";
@@ -128,18 +132,33 @@ function StatusCell(p: ICellRendererParams<PayableRow>) {
       {/* A long label ("Payment failed") wraps inside the pill rather than being cut by the column edge. */}
       <span className={cx("inline-flex max-w-full items-center gap-1 rounded-[10px] border px-2.5 py-0.5 text-xs font-medium", STATUS_PILL[s])}>{pill}</span>
       {detail && <span className="text-[10.5px] text-[#8a5a0c]">{detail}</span>}
-      {p.data.ownerDecision && <span className="text-[10.5px] text-muted">owner changed it to {p.data.recommendationLabel.toLowerCase()}</span>}
     </span>
   );
 }
 
-function RecommendationCell(p: ICellRendererParams<PayableRow>) {
+/** The decision in force, who made it, and a button that opens the decision editor. */
+function DecisionCell(p: ICellRendererParams<PayableRow>) {
   if (p.node.rowPinned || !p.data) return null;
-  const tone = p.data.recommendation === "hold" ? "text-terracotta" : p.data.recommendation === "pay_partial" ? "text-[#8a5a0c]" : "text-olive";
+  const row = p.data;
+  const tone = row.recommendation === "hold" ? "text-terracotta" : row.recommendation === "pay_partial" ? "text-[#8a5a0c]" : "text-olive";
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className={cx("text-sm font-medium", tone)}>{p.data.recommendationLabel}</span>
-      {p.data.ownerDecision && <span className="rounded-full border border-line bg-paper px-1.5 text-[10px] uppercase tracking-wide text-muted">owner</span>}
+    <span className="flex h-full flex-col items-start justify-center gap-0.5 leading-tight">
+      <span className="inline-flex items-center gap-1.5">
+        <span className={cx("text-sm font-medium", tone)}>{row.recommendationLabel}</span>
+        {row.ownerDecision && <span className="rounded-full border border-line bg-paper px-1.5 text-[10px] uppercase tracking-wide text-muted">owner</span>}
+      </span>
+      {row.locked ? (
+        <span className="text-[10.5px] text-muted">{row.ownerDecision ? "set by the owner" : "Claude and the checks"}</span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => p.node.rowIndex != null && p.api.startEditingCell({ rowIndex: p.node.rowIndex, colKey: "decision" })}
+          aria-label={`Change the decision for ${row.invoiceNumber}`}
+          className="rounded text-[11px] font-medium text-ledger-2 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ledger-2"
+        >
+          Change…
+        </button>
+      )}
     </span>
   );
 }
@@ -408,6 +427,28 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
         filter: "agTextColumnFilter",
       },
       {
+        // Pay in full / partial / hold, changeable in place: a popup editor that saves through the
+        // decision route (same rules as the review page) and refreshes the ledger from the server.
+        colId: "decision",
+        field: "recommendationLabel",
+        headerName: "Decision",
+        headerTooltip: "Claude and the checks recommend; you decide. Change… saves through the same rules as the review page.",
+        cellRenderer: DecisionCell,
+        width: 118,
+        editable: (p) => !!p.data && !p.node.rowPinned && !p.data.locked,
+        cellEditor: DecisionEditor,
+        cellEditorPopup: true,
+        cellEditorPopupPosition: "under",
+        // Typing in the reason box must not end the edit or move the grid's focus.
+        suppressKeyboardEvent: (p) => p.editing,
+        filter: "agTextColumnFilter",
+      },
+      // For the accountant's export only.
+      { field: "invoiceDate", headerName: "Invoice date", hide: true },
+      { field: "supplierTaxId", headerName: "Tax id", hide: true },
+      { field: "subtotalCents", headerName: "Net", hide: true },
+      { field: "vatCents", headerName: "VAT", hide: true },
+      {
         // Money first: it is what the owner reads the ledger for.
         headerName: "Amounts (EUR, VAT incl.)",
         marryChildren: true,
@@ -455,8 +496,6 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
             minWidth: 150,
             filter: "agTextColumnFilter",
           },
-          // The status pill already shows the outcome; kept for the CSV export and search.
-          { field: "recommendationLabel", headerName: "Claude + rules", cellRenderer: RecommendationCell, width: 150, hide: true, filter: "agTextColumnFilter" },
           {
             field: "dueDate",
             headerName: "Due",
@@ -629,6 +668,55 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
     });
   }, [today]);
 
+  // For the gestoría: Spanish headers, semicolons, decimal commas and dd/mm/yyyy dates, so Spanish
+  // Excel opens it as is (AG Grid adds the UTF-8 byte-order mark). Exports the rows in view.
+  const exportForAccountant = useCallback(() => {
+    const columns: [string, string][] = [
+      ["invoiceDate", "Fecha factura"],
+      ["invoiceNumber", "Nº factura"],
+      ["supplier", "Proveedor"],
+      ["supplierTaxId", "NIF"],
+      ["subtotalCents", "Base imponible"],
+      ["vatCents", "IVA"],
+      ["invoiceCents", "Total"],
+      ["dueDate", "Vencimiento"],
+      ["status", "Estado"],
+      ["withheldCents", "Retenido"],
+      ["paidCents", "Pagado (PayPal)"],
+      ["paypal", "Pago PayPal (lote · item)"],
+    ];
+    const headers = new Map(columns);
+    const ES: Record<PayableStatus, string> = {
+      paid: "Pagada",
+      sent: "Enviada, pendiente de cobro",
+      paying: "En pago",
+      failed: "Pago fallido",
+      returned: "Devuelta, sin pagar",
+      held: "Retenida",
+      disputed: "Pago parcial",
+      pending: "Pendiente",
+    };
+    const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? `${v.slice(8, 10)}/${v.slice(5, 7)}/${v.slice(0, 4)}` : "");
+    apiRef.current?.exportDataAsCsv({
+      fileName: `facturas-recibidas-${today}.csv`,
+      columnSeparator: ";",
+      columnKeys: columns.map(([k]) => k),
+      skipColumnGroupHeaders: true,
+      processHeaderCallback: (params) => headers.get(params.column.getColId()) ?? params.column.getColId(),
+      processCellCallback: (params) => {
+        const colId = params.column.getColId();
+        const v = params.value;
+        if (colId.endsWith("Cents")) return typeof v === "number" ? (v / 100).toFixed(2).replace(".", ",") : "";
+        if (colId === "invoiceDate" || colId === "dueDate") return day(v);
+        if (colId === "status") {
+          const d = params.node?.data as PayableRow | undefined;
+          return d ? ES[d.status] : "";
+        }
+        return v ?? "";
+      },
+    });
+  }, [today]);
+
   const pinnedBottom = useMemo(() => (totals ? [totals as unknown as PayableRow] : []), [totals]);
   const chartOptions = useMemo(() => moneyChartOptions(chartData, supplier, pickSupplier, hiddenSeries, narrow), [chartData, supplier, pickSupplier, hiddenSeries, narrow]);
   const toggleSeries = useCallback(
@@ -715,6 +803,14 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
           </svg>
           Export CSV
         </button>
+        <button
+          type="button"
+          onClick={exportForAccountant}
+          title="CSV for the accountant: Spanish headers, semicolons and decimal commas, ready for Excel"
+          className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-line-2 bg-card px-3.5 text-sm font-medium text-ink transition-colors hover:border-ink-2/50 hover:bg-paper"
+        >
+          For the gestoría
+        </button>
       </div>
 
       {/* Status chips: AG Grid external filter */}
@@ -786,14 +882,15 @@ export default function PayablesGrid({ rows, today }: { rows: PayableRow[]; toda
           tooltipHideDelay={12000}
           animateRows
           suppressCellFocus
+          stopEditingWhenCellsLoseFocus={false}
           groupHeaderHeight={34}
           overlayNoRowsTemplate="No invoices match the current filters."
         />
       </div>
 
       <p className="text-xs text-muted">
-        {rows.length} reviewed invoice{rows.length === 1 ? "" : "s"}. Hover a finding for the evidence behind it; click a supplier or invoice for the full review. Every filter
-        (search, header filters, chips, chart) drives the totals row, the subtotal strip and the chart.
+        {rows.length} reviewed invoice{rows.length === 1 ? "" : "s"}. Hover a finding for the evidence behind it; click a supplier or invoice for the full review;
+        Change… updates a decision in place. Every filter (search, header filters, chips, chart) drives the totals row, the subtotal strip and the chart.
       </p>
     </div>
   );

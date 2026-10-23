@@ -7,7 +7,8 @@
 // exactly with the KPI tiles above the grid.
 
 import { supplierById } from "@/data/seed";
-import { effective } from "@/lib/ap";
+import { effective, FRAUD_HOLD_KINDS, isPaidOrSent, withholdableCents } from "@/lib/ap";
+import { toCents } from "@/lib/money";
 import { ACTION_LABEL, STATUS_LABEL, statusOf, type PayableStatus } from "@/lib/payables-status";
 import type { AppState, PayAction, Severity } from "@/lib/types";
 import { updatedByLabel, webhookSeenLabel } from "@/lib/webhook-events";
@@ -26,6 +27,21 @@ export interface PayableRow {
   recommendationLabel: string;
   /** Owner overrode Claude's recommendation. */
   ownerDecision: boolean;
+  /** What Claude and the rules recommended (the owner may have changed it). */
+  recommended: PayAction;
+  /** The owner's reason for changing the recommendation, as kept in the audit log. */
+  ownerNote: string | null;
+  /** A partial payment would withhold something (line overcharges); otherwise it is pay in full or hold. */
+  partialAvailable: boolean;
+  /** Sent to PayPal or being paid: the decision can no longer change. */
+  locked: boolean;
+  /** Held for possible fraud (unknown sender, changed payment details, instructions aimed at the AI). */
+  fraudHold: boolean;
+  /** For the accountant's export (libro de facturas recibidas). */
+  supplierTaxId: string | null;
+  invoiceDate: string | null;
+  subtotalCents: number | null;
+  vatCents: number | null;
   finding: string;
   findingSeverity: Severity | null;
   findingCount: number;
@@ -73,6 +89,15 @@ export function buildPayableRows(state: AppState): PayableRow[] {
       recommendation: e.action,
       recommendationLabel: ACTION_LABEL[e.action],
       ownerDecision: e.byOwner,
+      recommended: r.recommendation,
+      ownerNote: e.byOwner ? (doc.decision?.note ?? null) : null,
+      partialAvailable: withholdableCents(doc) > 0,
+      locked: isPaidOrSent(doc),
+      fraudHold: r.findings.some((f) => FRAUD_HOLD_KINDS.includes(f.kind)),
+      supplierTaxId: supplier?.taxId ?? r.extraction.supplier_tax_id ?? null,
+      invoiceDate: r.extraction.invoice_date ?? null,
+      subtotalCents: r.extraction.subtotal != null ? toCents(r.extraction.subtotal) : null,
+      vatCents: r.extraction.vat_total != null ? toCents(r.extraction.vat_total) : null,
       finding: top ? top.title : "No issues found",
       findingSeverity: top ? top.severity : null,
       findingCount: r.findings.length,
